@@ -164,3 +164,17 @@ model/read_namelist.f 暂不复制；read_res1_des_mod.f 和 write_res1_des_mod.
 | 2026-08-22 | USE_JKR=.TRUE. 关键词/分配 smoke | 通过 | 新关键词被解析，新增数组完成初始化并运行；此结果不作为 JKR 力学验证 |
 
 下一提交将按 MFIX 26.1.2 的 Hertz 归一化契约实现逐颗粒表面能和异质接触派生参数；不会直接复制 23.4.1 的派生系数块。
+
+## 第三阶段模块 2：逐颗粒表面能与异质参数
+
+日期：2026-08-22。
+
+- DES_USR_VAR(1,particle) 是生产逐颗粒表面能槽：正值覆盖 phase 默认值，非正值回退并归一化为 DES_SURFACE_ENERGY(phase)。DES_USR_VAR(2:31) 不进入生产物理。
+- MFIX 26.1.2 官方路径已覆盖该粒子属性的初始化、grow、swap、DMP ghost/owner packet 和 RESTART_1 双精度读写；PFT/PFR/contact state 不借用此槽。
+- 异质颗粒对使用 gamma_eff=sqrt(gamma_i*gamma_j)；phase 默认 pair/wall 的 a0、delta_c、pull-off force、刚度和 Chen damping 基系数在 Hertz 参数检查阶段初始化。
+- JKR 系数采用独立的接触半径契约：运行时 KN/KT 乘 a，阻尼基系数乘 sqrt(a)；未把 23.4.1 原始 Hertz 数组布局覆盖到 26.1.2 的归一化数组。
+
+| 2026-08-22 | 模块 2 串行编译 | 通过 | GNU Fortran 15.3.0；无未定义值或浮点异常 |
+| 2026-08-22 | 同相异质表面能 0.01/0.04 | 通过 | 双精度 particle_output.csv 保持两值；几何平均等效 gamma 为 0.02 |
+
+Restart 待办：26.1.2 read_res0_des.f 在 restart 中的 DES_USR_VAR 数量大于当前 DES_USR_VAR_SIZE 时会跳过读取而不安全地推进记录。新 reader 必须做显式容量错误检查；含逐颗粒 gamma 的 JKR restart 要求 DES_USR_VAR_SIZE>=1。

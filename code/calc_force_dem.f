@@ -118,6 +118,16 @@ CONTAINS
 ! Initialize cohesive forces
       IF(USE_COHESION) PostCohesive(:) = ZERO
 
+! DES_USR_VAR(1,:) is a production particle property for JKR surface
+! energy. Non-positive values select and are normalized to the phase default.
+      IF(USE_JKR .AND. DES_USR_VAR_SIZE > 0) THEN
+         DO LL=1,MAX_PIP
+            IF(.NOT.IS_NORMAL(LL)) CYCLE
+            IF(DES_USR_VAR(1,LL) <= ZERO) &
+               DES_USR_VAR(1,LL) = DES_SURFACE_ENERGY(PIJK(LL,5))
+         ENDDO
+      ENDIF
+
 ! calculate particle wall contact
       CALL CALC_DEM_FORCE_WITH_WALL_STL
 

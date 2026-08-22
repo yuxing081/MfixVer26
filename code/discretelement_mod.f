@@ -1086,4 +1086,20 @@ END SUBROUTINE des_swapvalues_l
     END SUBROUTINE VDES_FLIPARRAY
 !^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+
+! Return the production surface energy for one particle. A positive
+! DES_USR_VAR(1,:) value overrides the phase default.
+      DOUBLE PRECISION FUNCTION GET_DES_SURFACE_ENERGY(PARTICLE_INDEX)
+         IMPLICIT NONE
+         INTEGER, INTENT(IN) :: PARTICLE_INDEX
+         INTEGER :: PHASE_INDEX
+
+         PHASE_INDEX = PIJK(PARTICLE_INDEX,5)
+         GET_DES_SURFACE_ENERGY = DES_SURFACE_ENERGY(PHASE_INDEX)
+         IF(DES_USR_VAR_SIZE > 0 .AND. ALLOCATED(DES_USR_VAR)) THEN
+            IF(DES_USR_VAR(1,PARTICLE_INDEX) > 0.0D0) &
+               GET_DES_SURFACE_ENERGY = DES_USR_VAR(1,PARTICLE_INDEX)
+         ENDIF
+      END FUNCTION GET_DES_SURFACE_ENERGY
+
       END MODULE DISCRETELEMENT

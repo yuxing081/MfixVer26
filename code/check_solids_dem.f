@@ -24,6 +24,22 @@ MODULE CHECK_SOLIDS_DEM_MOD
 
 CONTAINS
 
+! Marshall (2009), Eq. (53): restitution-to-damping fit used by Chen JKR.
+   DOUBLE PRECISION FUNCTION JKR_DAMPING_ALPHA(RESTITUTION)
+      IMPLICIT NONE
+      DOUBLE PRECISION, INTENT(IN) :: RESTITUTION
+
+      IF(RESTITUTION >= ONE) THEN
+         JKR_DAMPING_ALPHA = ZERO
+      ELSE
+         JKR_DAMPING_ALPHA = 1.2728D0 - 4.2783D0*RESTITUTION + &
+            11.087D0*RESTITUTION**2 - 22.348D0*RESTITUTION**3 + &
+            27.467D0*RESTITUTION**4 - 18.022D0*RESTITUTION**5 + &
+            4.8218D0*RESTITUTION**6
+      ENDIF
+   END FUNCTION JKR_DAMPING_ALPHA
+
+
 !vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv!
 !                                                                      !
 !  SUBROUTINE: CHECK_SOLIDS_DEM                                        !
@@ -974,6 +990,8 @@ CONTAINS
       v_poisson((MMAX+1):MMAX_TOT) = v_poisson(1:DES_MMAX)
       des_en_wall_input((MMAX+1):MMAX_TOT) = des_en_wall_input(1:DES_MMAX)
       des_et_wall_input((MMAX+1):MMAX_TOT) = des_et_wall_input(1:DES_MMAX)
+      IF(USE_JKR) DES_SURFACE_ENERGY((MMAX+1):MMAX_TOT) = &
+         DES_SURFACE_ENERGY(1:DES_MMAX)
       lent = MMAX_TOT+MMAX_TOT*(MMAX_TOT-1)/2
       lend = DES_MMAX+DES_MMAX*(DES_MMAX-1)/2
       lenc = lent-lend
@@ -1109,6 +1127,33 @@ CONTAINS
             ENDIF
             DES_ETAT(L,M) = DES_ETAT(M,L)
 
+! JKR coefficients retain their own contact-radius runtime contract:
+! KN/KT are multiplied by a, while damping is multiplied by sqrt(a).
+            IF(USE_JKR) THEN
+               JKR_GAMAN(M,L) = SQRT(DES_SURFACE_ENERGY(M)* &
+                  DES_SURFACE_ENERGY(L))
+               JKR_AoN(M,L) = (9.D0*PI*JKR_GAMAN(M,L)*R_EFF**2/ &
+                  E_EFF)**(ONE/3.D0)
+               JKR_DeltacN(M,L) = JKR_AoN(M,L)**2 / &
+                  (2.D0*6.D0**(ONE/3.D0)*R_EFF)
+               JKR_FcN(M,L) = 3.D0*PI*R_EFF*JKR_GAMAN(M,L)
+
+               HERT_KN_JKR(M,L) = (4.D0/3.D0)*E_EFF
+               HERT_KT_JKR(M,L) = 8.D0*G_MOD_EFF
+               DES_ETAN_JKR(M,L) = JKR_DAMPING_ALPHA(EN)* &
+                  SQRT(HERT_KN_JKR(M,L)*MASS_EFF)
+               DES_ETAT_JKR(M,L) = DES_ETAN_JKR(M,L)
+
+               JKR_GAMAN(L,M) = JKR_GAMAN(M,L)
+               JKR_AoN(L,M) = JKR_AoN(M,L)
+               JKR_DeltacN(L,M) = JKR_DeltacN(M,L)
+               JKR_FcN(L,M) = JKR_FcN(M,L)
+               HERT_KN_JKR(L,M) = HERT_KN_JKR(M,L)
+               HERT_KT_JKR(L,M) = HERT_KT_JKR(M,L)
+               DES_ETAN_JKR(L,M) = DES_ETAN_JKR(M,L)
+               DES_ETAT_JKR(L,M) = DES_ETAT_JKR(M,L)
+            ENDIF
+
 !{SBAN
 ! Calculate the collision time scale (added conditional).
             IF(EN .NE. ZERO) THEN
@@ -1191,6 +1236,22 @@ CONTAINS
             DES_ETAT_WALL(M) = DES_ETAT_WALL(M)/SQRT(PI*PI+(LOG(ET))**2)
          ELSE
             DES_ETAT_WALL(M) = SQRT(5.d0)*SQRT(HERT_Kwt(M)*RED_MASS_EFF)
+         ENDIF
+
+! Particle-wall JKR coefficients use the same contact-radius contract.
+         IF(USE_JKR) THEN
+            JKR_GAMAWN(M) = SQRT(DES_SURFACE_ENERGY(M)* &
+               DES_SURFACE_ENERGY_WALL)
+            JKR_AoWN(M) = (9.D0*PI*JKR_GAMAWN(M)*R_EFF**2/ &
+               E_EFF)**(ONE/3.D0)
+            JKR_DeltacWN(M) = JKR_AoWN(M)**2 / &
+               (2.D0*6.D0**(ONE/3.D0)*R_EFF)
+            JKR_FcWN(M) = 3.D0*PI*R_EFF*JKR_GAMAWN(M)
+            HERT_KWN_JKR(M) = (4.D0/3.D0)*E_EFF
+            HERT_KWT_JKR(M) = 8.D0*G_MOD_EFF
+            DES_ETAN_WALL_JKR(M) = JKR_DAMPING_ALPHA(EN)* &
+               SQRT(HERT_KWN_JKR(M)*MASS_EFF)
+            DES_ETAT_WALL_JKR(M) = DES_ETAN_WALL_JKR(M)
          ENDIF
 
 !{SBAN
