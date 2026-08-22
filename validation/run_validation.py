@@ -18,16 +18,27 @@ from typing import Any
 
 from validation.jkr_tools.case_generation import write_case_files
 from validation.jkr_tools.config import (
+    CaseConfig,
+    MaterialConfig,
     comparison_tolerances,
     hertz_case_configs,
     default_material_config,
     default_numerical_config,
+    jkr_normal_case_configs,
     restart_case_configs,
 )
 from validation.jkr_tools.hertz import (
     compare_case_trajectories,
     extract_contact_metrics,
 )
+from validation.jkr_tools.jkr import analyze_normal_jkr_trajectory
+from validation.jkr_tools.reference import (
+    ContactParameters,
+    adhesion_only_critical_speed,
+    contact_parameters,
+    jkr_key_points,
+)
+
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -287,7 +298,14 @@ def run_hertz_case(
     }, case)
     statuses = {
         "official": run_solver(
-            (str(native_wrapper), "-f", "mfix.dat"), official_directory
+            (
+                str(native_wrapper),
+                "-f",
+                "mfix.dat",
+                "-m",
+                str(native_module),
+            ),
+            official_directory,
         ),
         "migrated": run_solver((str(solver),), migrated_directory),
     }
@@ -342,6 +360,122 @@ def run_hertz_case(
         "trajectory_comparison": trajectory_comparison,
         "contact_metrics": metrics,
         "comparison": comparison,
+    }
+
+
+def normal_contact_parameters(
+    material: MaterialConfig,
+    wall_contact: bool,
+) -> ContactParameters:
+    return contact_parameters(
+        material.particle_radius,
+        material.particle_density,
+        material.surface_energy,
+        material.young_modulus,
+        material.poisson_ratio,
+        material.normal_restitution,
+        None if wall_contact else material.particle_radius,
+        None if wall_contact else material.particle_density,
+        material.wall_surface_energy if wall_contact else material.surface_energy,
+        material.wall_young_modulus if wall_contact else material.young_modulus,
+        material.wall_poisson_ratio if wall_contact else material.poisson_ratio,
+    )
+
+
+def normal_jkr_cases(
+    material: MaterialConfig,
+) -> tuple[CaseConfig, ...]:
+    wall_parameters = normal_contact_parameters(material, True)
+    pair_parameters = normal_contact_parameters(material, False)
+    return jkr_normal_case_configs(
+        material,
+        adhesion_only_critical_speed(wall_parameters),
+        adhesion_only_critical_speed(pair_parameters),
+    )
+
+
+def run_normal_jkr_case(
+    solver: Path,
+    case: CaseConfig,
+    run_directory: Path,
+    metadata: dict[str, Any],
+) -> dict[str, Any]:
+    material = default_material_config()
+    numerical = default_numerical_config()
+    parameters = normal_contact_parameters(material, case.wall_contact)
+    critical_speed = adhesion_only_critical_speed(parameters)
+    expected_behavior = "capture" if case.name.endswith("capture") else "rebound"
+    case_directory = run_directory / case.name
+    run_name = f"R26_{case.name.upper()}"
+    write_case_files(
+        output_directory=case_directory,
+        case=case,
+        material=material,
+        numerical=numerical,
+        run_name=run_name,
+        run_type="new",
+        stop_time=case.stop_time,
+        partition=numerical.serial_partition,
+    )
+    force_absolute_tolerance = 1.0e-9
+    force_relative_tolerance = 2.0e-2
+    rebound_velocity_tolerance = 1.0e-6
+    write_case_metadata(case_directory / "metadata.json", {
+        **metadata,
+        "reference": {
+            "contact_parameters": dataclasses.asdict(parameters),
+            "key_points": [
+                dataclasses.asdict(point) for point in jkr_key_points(parameters)
+            ],
+            "adhesion_only_critical_speed": critical_speed,
+            "impact_speed_factor": case.contact_time_speed / critical_speed,
+            "expected_behavior": expected_behavior,
+        },
+        "tolerances": {
+            "vtp_force_absolute": force_absolute_tolerance,
+            "vtp_force_relative": force_relative_tolerance,
+            "rebound_velocity": rebound_velocity_tolerance,
+        },
+    }, case)
+    solver_status = run_solver((str(solver),), case_directory)
+    if not solver_status[0]:
+        return {
+            "case": case.name,
+            "passed": False,
+            "directory": str(case_directory),
+            "solver_status": solver_status,
+        }
+    paths = tuple(sorted(case_directory.glob("PARTICLES_*.vtp")))
+    analysis = analyze_normal_jkr_trajectory(
+        paths,
+        "wall" if case.wall_contact else "pair",
+        parameters,
+        material.particle_radius,
+        force_absolute_tolerance,
+        force_relative_tolerance,
+        rebound_velocity_tolerance,
+    )
+    if expected_behavior == "capture":
+        behavior_passed = (
+            analysis["captured"]
+            and analysis["final_contact_active"]
+            and analysis["final_overlap"] >= -parameters.critical_separation
+        )
+    else:
+        behavior_passed = (
+            not analysis["captured"]
+            and not analysis["final_contact_active"]
+            and analysis["rebound_velocity"] > rebound_velocity_tolerance
+            and analysis["final_overlap"] < -parameters.critical_separation
+        )
+    return {
+        "case": case.name,
+        "passed": analysis["passed"] and behavior_passed,
+        "directory": str(case_directory),
+        "solver_status": solver_status,
+        "expected_behavior": expected_behavior,
+        "behavior_passed": behavior_passed,
+        "trajectory": analysis,
     }
 
 
@@ -488,7 +622,9 @@ def write_summary(run_directory: Path, results: list[dict[str, Any]]) -> None:
 
 def parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument("suite", choices=("unit", "hertz", "restart", "all"))
+    parser.add_argument(
+        "suite", choices=("unit", "hertz", "serial", "restart", "all")
+    )
     parser.add_argument(
         "--solver",
         type=Path,
@@ -546,6 +682,21 @@ def main() -> int:
                     run_directory,
                     metadata,
                 ))
+            except Exception as error:
+                results.append({
+                    "case": case.name,
+                    "passed": False,
+                    "directory": str(run_directory / case.name),
+                    "reason": f"{type(error).__name__}: {error}",
+                })
+    if arguments.suite in {"serial", "all"}:
+        for case in normal_jkr_cases(default_material_config()):
+            try:
+                results.append(
+                    run_normal_jkr_case(
+                        solver, case, run_directory, metadata
+                    )
+                )
             except Exception as error:
                 results.append({
                     "case": case.name,

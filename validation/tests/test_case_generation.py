@@ -10,12 +10,14 @@ from validation.jkr_tools.case_generation import (
     particle_data_rows,
     particle_input_text,
     validate_generated_case,
+    wall_gap,
     write_case_files,
 )
 from validation.jkr_tools.config import (
     default_material_config,
     default_numerical_config,
     hertz_case_configs,
+    jkr_normal_case_configs,
     restart_case_config,
 )
 
@@ -205,6 +207,91 @@ class NativeHertzCaseGenerationTests(unittest.TestCase):
             include_jkr_keywords=False,
         )
         self.assertIn("cannot omit JKR keywords for a JKR-enabled case", errors)
+
+
+class JkrNormalCaseGenerationTests(unittest.TestCase):
+    def setUp(self):
+        self.material = default_material_config()
+        self.numerical = default_numerical_config()
+        self.wall_critical_speed = 2.0
+        self.pair_critical_speed = 4.0
+        self.cases = jkr_normal_case_configs(
+            self.material,
+            self.wall_critical_speed,
+            self.pair_critical_speed,
+        )
+
+    def test_case_names_and_speed_factors_are_explicit(self):
+        expected = (
+            ("wall_normal_capture", 0.95 * self.wall_critical_speed),
+            ("wall_normal_rebound", 3.0 * self.wall_critical_speed),
+            ("pair_normal_capture", 0.95 * self.pair_critical_speed),
+            ("pair_normal_rebound", 3.0 * self.pair_critical_speed),
+        )
+        self.assertEqual(
+            tuple(case.name for case in self.cases),
+            tuple(item[0] for item in expected),
+        )
+        for case, (_, expected_speed) in zip(self.cases, expected):
+            with self.subTest(case_name=case.name):
+                self.assertTrue(case.use_jkr)
+                self.assertAlmostEqual(case.contact_time_speed, expected_speed)
+
+    def test_jkr_inputs_validate_and_contain_required_extensions(self):
+        for case in self.cases:
+            with self.subTest(case_name=case.name):
+                mfix_text = mfix_dat_text(
+                    case=case,
+                    material=self.material,
+                    numerical=self.numerical,
+                    run_name=case.name.upper(),
+                    run_type="new",
+                    stop_time=case.stop_time,
+                    partition=self.numerical.serial_partition,
+                )
+                particle_text = particle_input_text(case.particles)
+                self.assertEqual(
+                    validate_generated_case(
+                        mfix_text=mfix_text,
+                        particle_text=particle_text,
+                        case=case,
+                        material=self.material,
+                        numerical=self.numerical,
+                    ),
+                    (),
+                )
+                self.assertEqual(keyword_count(mfix_text, "use_jkr"), 1)
+                self.assertIn("use_jkr = .True.", mfix_text)
+
+    def test_wall_and_pair_start_with_gap_not_unintended_overlap(self):
+        for case in self.cases:
+            with self.subTest(case_name=case.name):
+                if case.wall_contact:
+                    self.assertEqual(len(case.particles), 1)
+                    self.assertAlmostEqual(wall_gap(case.particles[0]), 0.2e-6)
+                    self.assertGreater(wall_gap(case.particles[0]), 0.0)
+                else:
+                    overlaps = pair_overlaps(case.particles)
+                    self.assertEqual(len(overlaps), 1)
+                    self.assertAlmostEqual(overlaps[0], -0.2e-6)
+                    self.assertLess(overlaps[0], 0.0)
+
+    def test_non_positive_critical_speeds_are_rejected(self):
+        for wall_speed, pair_speed in (
+            (0.0, self.pair_critical_speed),
+            (-1.0, self.pair_critical_speed),
+            (self.wall_critical_speed, 0.0),
+            (self.wall_critical_speed, -1.0),
+        ):
+            with self.subTest(wall_speed=wall_speed, pair_speed=pair_speed):
+                with self.assertRaisesRegex(
+                    ValueError, "critical speeds must be positive"
+                ):
+                    jkr_normal_case_configs(
+                        self.material,
+                        wall_speed,
+                        pair_speed,
+                    )
 
 
 if __name__ == "__main__":

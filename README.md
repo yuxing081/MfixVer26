@@ -59,10 +59,12 @@ build/、solver、模块文件和运行输出均被 Git 忽略。不要在 conda
 
     cd /home/yuxing/mfix/MfixVer26
     ./validation/run_validation.sh unit
+    ./validation/run_validation.sh hertz
+    ./validation/run_validation.sh serial
     ./validation/run_validation.sh restart
     ./validation/run_validation.sh all
 
-当前已接入 `unit`、官方 stock 对照的串行 `hertz` 与串行 `restart`；其余 JKR 物理、速度、几何和 DMP 套件按 `docs/VALIDATION.md` 的矩阵逐阶段接入，未运行项目不会标记为通过。
+当前已接入 `unit`、官方 stock 对照的串行 `hertz`、基础 JKR normal `serial` 与串行 `restart`；其余速度、几何和 DMP 套件按 `docs/VALIDATION.md` 的矩阵逐阶段接入，未运行项目不会标记为通过。
 
 restart 套件对两颗粒和斜碰墙面分别运行：
 
@@ -71,7 +73,6 @@ restart 套件对两颗粒和斜碰墙面分别运行：
 3. split stage + RESTART_2 敏感性负对照。
 
 RESTART_1 必须与 continuous 的双精度 `particle_output.csv` 逐字节一致。RESTART_2 是否不同单独记录，不作为正向通过条件。结果写入 `validation/results/runs/<UTC时间戳>-<pid>/`，永不复用固定目录。
-    ./validation/run_validation.sh hertz
 
 完整测试顺序保持为原生 Hertz 保护、串行墙面/颗粒对、速度扫描、壁面几何、2-rank DMP、RESTART_1 和小颗粒群集成测试。正式结果写入 `docs/VALIDATION.md`，活动进度写入 `docs/TEST_PROGRESS.md`。
 

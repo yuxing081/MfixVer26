@@ -193,12 +193,12 @@ def _unit(vector: Sequence[float]) -> tuple[float, float, float]:
         raise ValueError("wall_normal must be a finite, non-zero three-vector")
     return tuple(float(x) / norm for x in vector)  # type: ignore[return-value]
 
-def extract_contact_metrics(frames: Sequence[Path] | Sequence[VtpData] | Sequence[Mapping[str, Any]], contact_kind: str = "pair", particle_ids: Sequence[int] | None = None, particle_radius: float | None = None, wall_position: float = 0.0, wall_normal: Sequence[float] = (0.0, 1.0, 0.0), overlap_tolerance: float = 0.0, force_tolerance: float = 0.0) -> dict[str, float | bool]:
+def extract_contact_metrics(frames: Sequence[Path] | Sequence[VtpData] | Sequence[Mapping[str, Any]], contact_kind: str = "pair", particle_ids: Sequence[int] | None = None, particle_radius: float | None = None, wall_position: float = 0.0, wall_normal: Sequence[float] = (0.0, 1.0, 0.0), overlap_tolerance: float = 0.0, force_tolerance: float = 0.0, rebound_velocity_tolerance: float = 0.0) -> dict[str, float | bool]:
     trajectory = _coerce(frames)
     kind = contact_kind.casefold()
     if kind not in {"pair", "wall"}:
         raise ValueError("contact_kind must be 'pair' or 'wall'")
-    if overlap_tolerance < 0 or force_tolerance < 0:
+    if overlap_tolerance < 0 or force_tolerance < 0 or rebound_velocity_tolerance < 0:
         raise ValueError("contact tolerances must be non-negative")
     ids = sorted(_record_map(trajectory[0], 0))
     selected = tuple(ids if particle_ids is None else particle_ids)
@@ -226,7 +226,7 @@ def extract_contact_metrics(frames: Sequence[Path] | Sequence[VtpData] | Sequenc
                     raise ValueError("pair metrics need Diameter fields or particle_radius")
                 radii = [float(particle_radius)] * 2
             direction = tuple(x / distance for x in displacement)
-            overlap = max(0.0, sum(radii) - distance)
+            overlap = sum(radii) - distance
             speed = _dot(tuple(a - b for a, b in zip(velocities[1], velocities[0])), direction)
         else:
             radius = float(particle_radius) if particle_radius is not None else None
@@ -234,7 +234,7 @@ def extract_contact_metrics(frames: Sequence[Path] | Sequence[VtpData] | Sequenc
                 radius = float(chosen[0]["Diameter"]) / 2
             if radius is None or not math.isfinite(radius) or radius <= 0:
                 raise ValueError("wall metrics need a positive particle_radius or Diameter field")
-            overlap = max(0.0, radius - (_dot(positions[0], normal) - wall_position))
+            overlap = radius - (_dot(positions[0], normal) - wall_position)
             speed = _dot(velocities[0], normal)
         force = _components(chosen[0], "Collision_force") if "Collision_force" in chosen[0] else ()
         force_active = bool(force) and math.sqrt(_dot(force, force)) > force_tolerance
@@ -250,7 +250,7 @@ def extract_contact_metrics(frames: Sequence[Path] | Sequence[VtpData] | Sequenc
     else:
         duration, impact = 0.0, max(0.0, -speeds[0])
         rebound = max((max(0.0, speed) for speed in speeds[1:]), default=0.0)
-    return {"maximum_overlap": max(overlaps), "contact_duration": duration, "impact_velocity": impact, "rebound_normal_velocity": rebound, "rebound_velocity": rebound, "effective_restitution": rebound / impact if impact > 0 else 0.0, "captured": rebound <= overlap_tolerance}
+    return {"maximum_overlap": max(overlaps), "minimum_overlap": min(overlaps), "final_overlap": overlaps[-1], "final_normal_velocity": speeds[-1], "contact_active_at_end": active[-1], "contact_duration": duration, "impact_velocity": impact, "rebound_normal_velocity": rebound, "rebound_velocity": rebound, "effective_restitution": rebound / impact if impact > 0 else 0.0, "captured": rebound <= rebound_velocity_tolerance}
 
 def compare_case_trajectories(left_directory: Path, right_directory: Path, pattern: str = "*.vtp", tolerances: Mapping[str, Any] | None = None, time_tolerance: float = 0.0) -> dict[str, Any]:
     left = tuple(sorted(Path(left_directory).glob(pattern)))

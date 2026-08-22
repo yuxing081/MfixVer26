@@ -124,6 +124,7 @@ def default_numerical_config() -> NumericalConfig:
             1.25,
             1.50,
             2.0,
+            3.0,
         ),
         critical_refinement_points=7,
     )
@@ -296,6 +297,102 @@ def hertz_case_configs(
         ),
     )
 
+
+def jkr_normal_case_configs(
+    material: MaterialConfig,
+    wall_critical_speed: float,
+    pair_critical_speed: float,
+) -> tuple[CaseConfig, ...]:
+    """Return normal cases scaled from the adhesion-only critical speed."""
+    if wall_critical_speed <= 0.0 or pair_critical_speed <= 0.0:
+        raise ValueError("critical speeds must be positive")
+    diameter = 2.0 * material.particle_radius
+
+    def wall_case(name: str, speed: float, behavior: str) -> CaseConfig:
+        particle = ParticleConfig(
+            position=(10.0e-6, 1.2e-6, 10.0e-6),
+            velocity=(0.0, -speed, 0.0),
+            diameter=diameter,
+            density=material.particle_density,
+            surface_energy=material.surface_energy,
+        )
+        return CaseConfig(
+            name=name,
+            category="particle_wall",
+            description=f"JKR wall normal {behavior} at {speed:.12e} m/s",
+            particles=(particle,),
+            wall_contact=True,
+            use_jkr=True,
+            stop_time=2.0e-6,
+            restart_time=None,
+            monitor_interval=1.0e-9,
+            restart_interval=2.0e-6,
+            vtk_interval=2.0e-9,
+            des_usr_var_size=1,
+            monitor_user_variables=(),
+            expected_initial_overlap=0.2e-6,
+            contact_time_speed=speed,
+            write_vtk_files=True,
+        )
+
+    def pair_case(name: str, speed: float, behavior: str) -> CaseConfig:
+        particles = (
+            ParticleConfig(
+                position=(10.0e-6, 8.9e-6, 10.0e-6),
+                velocity=(0.0, 0.5 * speed, 0.0),
+                diameter=diameter,
+                density=material.particle_density,
+                surface_energy=material.surface_energy,
+            ),
+            ParticleConfig(
+                position=(10.0e-6, 11.1e-6, 10.0e-6),
+                velocity=(0.0, -0.5 * speed, 0.0),
+                diameter=diameter,
+                density=material.particle_density,
+                surface_energy=material.surface_energy,
+            ),
+        )
+        return CaseConfig(
+            name=name,
+            category="particle_pair",
+            description=f"JKR pair normal {behavior} at {speed:.12e} m/s",
+            particles=particles,
+            wall_contact=False,
+            use_jkr=True,
+            stop_time=2.0e-6,
+            restart_time=None,
+            monitor_interval=1.0e-9,
+            restart_interval=2.0e-6,
+            vtk_interval=2.0e-9,
+            des_usr_var_size=1,
+            monitor_user_variables=(),
+            expected_initial_overlap=-0.2e-6,
+            contact_time_speed=speed,
+            write_vtk_files=True,
+        )
+
+    return (
+        wall_case(
+            "wall_normal_capture",
+            0.95 * wall_critical_speed,
+            "capture",
+        ),
+        wall_case(
+            "wall_normal_rebound",
+            3.0 * wall_critical_speed,
+            "rebound",
+        ),
+        pair_case(
+            "pair_normal_capture",
+            0.95 * pair_critical_speed,
+            "capture",
+        ),
+        pair_case(
+            "pair_normal_rebound",
+            3.0 * pair_critical_speed,
+            "rebound",
+        ),
+    )
 
 def comparison_tolerances() -> dict[str, tuple[float, float]]:
     """Return initial absolute/relative tolerances by data source and field."""

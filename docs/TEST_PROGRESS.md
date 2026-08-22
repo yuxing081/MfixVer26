@@ -9,9 +9,9 @@
 - 生产源码基线：`954ea0b9639592b9632c4f8fba92d23eabf42b99`。
 - 串行 solver SHA-256：`0e7a4e7e8fad556481bcb11bd76aed0508b180c7a5e0944aaca681dfc8a0ab6f`。
 - DMP solver SHA-256：`3523a0d4352431534f8576e905201c04abc7105ba6902f721552916a182ab26c`。
-- 最新完整证据：`/home/yuxing/mfix/MfixVer26/validation/results/runs/20260822T114550.104470Z-132230`（unit + Hertz + restart 全部 PASS）。
+- 最新统一全套证据：`/home/yuxing/mfix/MfixVer26/validation/results/runs/20260822T123328.871736Z-136416`（unit、Hertz、基础 JKR、restart 共 10 项全部 PASS）。
 - 前一 restart 基线：`/home/yuxing/mfix/MfixVer26/validation/results/runs/20260822T095448.025415Z-107484`。
-- 已通过：53 个单元测试、3 个官方 MFIX26 原生 Hertz 保护工况、serial pair/wall RESTART_1 末态逐字节回归、RESTART_2 敏感性负对照。
+- 已通过：60 个单元测试、3 个官方 MFIX26 原生 Hertz 保护工况、4 个 serial JKR normal 核心工况、serial pair/wall RESTART_1 末态逐字节回归及 RESTART_2 敏感性负对照。
 
 ## 本轮目标与顺序
 
@@ -40,7 +40,7 @@
 | 文献和旧测试过程审查 | PASS | 4 篇直接相关论文复制到 `docs/references`，旧目录只读 |
 | 原生 Hertz 保护 | PASS | stock module `3e95ef9e…be6b7`；pair/wall normal、wall oblique 三组共同 501 帧及双精度末态完全一致；迁移 solver 仅多写一个逐字节重复末帧 |
 | JKR 理论关键点 | PASS | 已单测最大拉力、临界分离、零重叠和平衡点，明确最大拉力与临界分离不是同一点 |
-| 基础 capture/rebound | NEXT | Hertz 与关键点基线已通过 |
+| 基础 capture/rebound | PARTIAL | 四项核心行为和逐点法向力 PASS；能量分解尚未接入。1.05×、2.0×黏附临界速度在 e=0.6 下仍捕获，失败证据已保留 |
 | 速度扫描 | PENDING | 等基础工况 |
 | 异质表面能 | PENDING | 等基础工况 |
 | 壁面几何 | PENDING | 等基础工况 |

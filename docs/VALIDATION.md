@@ -85,11 +85,11 @@ Float32 VTP 只用于轨迹和可视化，不能替代 restart 边界的双精�
 | A 原生保护 | pair Hertz normal | 官方 26.1.2 vs custom JKR-off | x、v、omega、重叠、碰撞力、末态 | 共同 VTP 帧及双精度末态完全一致 | PASS |
 | A 原生保护 | wall Hertz normal | 官方 26.1.2 vs custom JKR-off | 同上 | 共同 VTP 帧及双精度末态完全一致 | PASS |
 | A 原生保护 | oblique Hertz friction | 官方 26.1.2 vs custom JKR-off | 切向运动、omega、碰撞力、末态 | 共同 VTP 帧及双精度末态完全一致 | PASS |
-| B 墙面 | wall_normal_capture/rebound | JKR 理论与 MFIX26 | 捕获、回弹、重叠、时长、Fc、能量 | 行为正确且误差不超容差 | PLANNED |
+| B 墙面 | wall_normal_capture/rebound | JKR 理论与 MFIX26 | 捕获、回弹、重叠、时长、总法向力 | 行为与逐点力误差通过；能量待补 | PARTIAL |
 | B 墙面 | wall_normal_velocity_sweep | 自适应速度扫描 | 临界区间、e_eff、重叠、时长 | 覆盖捕获/临界/回弹并加密一次 | PLANNED |
 | B 墙面 | oblique stick/rebound | 理论趋势与 MFIX26 | PFT、切向力、omega、能量 | 库仑限制和历史连续 | PLANNED |
 | B 墙面 | sliding/rolling | 独立历史与 MFIX26 | PFT/PFR、滚动力矩、临界位移 | 无意外清零且限制正确 | PLANNED |
-| C 颗粒对 | pair_normal_capture/rebound | JKR 理论与 MFIX26 | 捕获、回弹、重叠、时长、Fc | 行为正确且误差不超容差 | PLANNED |
+| C 颗粒对 | pair_normal_capture/rebound | JKR 理论与 MFIX26 | 捕获、回弹、重叠、时长、总法向力 | 行为与逐点力误差通过；能量待补 | PARTIAL |
 | C 颗粒对 | pair_normal_velocity_sweep | 自适应速度扫描 | 临界区间、e_eff、重叠、时长 | 覆盖三类行为并加密一次 | PLANNED |
 | C 颗粒对 | oblique/sliding/rolling | 独立历史与 MFIX26 | PFT/PFR、力、力矩、omega | 历史和符号连续 | PLANNED |
 | C 颗粒对 | tensile_neck_break | JKR 状态机与理论 delta_c | 压缩、卸载、负重叠、断颈 | 完整经历六阶段且断裂位置正确 | PLANNED |
@@ -113,9 +113,9 @@ Float32 VTP 只用于轨迹和可视化，不能替代 restart 边界的双精�
 
 结果目录：
 
-`/home/yuxing/mfix/MfixVer26/validation/results/runs/20260822T114550.104470Z-132230`
+`/home/yuxing/mfix/MfixVer26/validation/results/runs/20260822T121746.141834Z-135570`
 
-结果：53 tests，全部通过；新增 stock-compatible 输入契约、JKR 最大拉力/临界分离关键点，以及按 global `Particle_ID` 对齐的 Hertz 轨迹与指标检查。
+结果：60 tests，全部通过；覆盖 stock-compatible 输入、JKR 四个理论关键点、有历史的负重叠状态、JKR 总法向力比较，以及按 global `Particle_ID` 对齐的 Hertz 轨迹与指标检查。
 
 ### 4.2 原生 Hertz 保护
 
@@ -125,7 +125,7 @@ Float32 VTP 只用于轨迹和可视化，不能替代 restart 边界的双精�
 
 证据目录：
 
-`/home/yuxing/mfix/MfixVer26/validation/results/runs/20260822T114550.104470Z-132230`
+`/home/yuxing/mfix/MfixVer26/validation/results/runs/20260822T121834.843896Z-135629`
 
 对照双方使用逐字节相同的 stock-compatible `mfix.dat` 和
 `particle_input.dat`。输入保留 `des_coll_model='HERTZIAN'`、材料、网格、
@@ -148,7 +148,37 @@ Float32 VTP 只用于轨迹和可视化，不能替代 restart 边界的双精�
 迁移 solver SHA-256 为
 `0e7a4e7e8fad556481bcb11bd76aed0508b180c7a5e0944aaca681dfc8a0ab6f`。
 
-### 4.3 串行 restart
+### 4.3 基础 JKR normal capture/rebound
+
+命令：
+
+    ./validation/run_validation.sh serial
+
+通过证据目录：
+
+`/home/yuxing/mfix/MfixVer26/validation/results/runs/20260822T122736.293484Z-136166`
+
+统一 `all` 复核目录：`/home/yuxing/mfix/MfixVer26/validation/results/runs/20260822T123328.871736Z-136416`，10 项全部 PASS。
+
+材料恢复系数为 0.6。Chen/Thornton 的 adhesion-only critical speed 是无黏性阻尼阈值；旧参考中 0.95/1.05 的分界单测明确使用 restitution=1.0，不能直接作为本工况的含阻尼阈值。独立 RK4 小扫描与 MFIX26 均显示 2.0 倍仍捕获，3.0 倍已明显回弹，因此基础工况采用 0.95 倍验证捕获、3.0 倍验证明显回弹；真正转变区间留给自适应速度扫描确定。
+
+| 工况 | 入射速度 (m/s) | 回弹速度 (m/s) | `e_eff` | 最终重叠 (m) | 接触时长 (s) | 力最大绝对误差 (N) | 核心结果 |
+|---|---:|---:|---:|---:|---:|---:|---|
+| wall capture | 0.31175894 | 0 | 0 | 5.16650e-9 | 1.35800e-6 | 7.71e-11 | PASS |
+| wall rebound | 0.98450196 | 0.30811551 | 0.31296587 | -5.35214e-7 | 7.19961e-8 | 2.41e-10 | PASS |
+| pair capture | 0.34993759 | 0 | 0 | 6.51040e-9 | 1.42800e-6 | 3.92e-11 | PASS |
+| pair rebound | 1.10506606 | 0.34583807 | 0.31295692 | -6.05872e-7 | 8.00028e-8 | 1.11e-10 | PASS |
+
+逐帧比较使用有符号重叠和 JKR history state，参考总法向力为独立 JKR 弹性力加速度相关阻尼项。Float32 VTP 力容差为绝对 1e-9 N 或相对 2%；四项均无首个超差点。每个 case 的 metadata 同时记录临界分离、最大拉力、零重叠和平衡点；动态总力不会被误当成静态拉脱力。
+
+两组未通过的阈值探针保留为速度扫描证据：
+
+- 1.05 倍：`/home/yuxing/mfix/MfixVer26/validation/results/runs/20260822T121758.413997Z-135582`；
+- 2.0 倍：`/home/yuxing/mfix/MfixVer26/validation/results/runs/20260822T122423.198578Z-135965`。
+
+当前 PARTIAL 仅表示尚未加入逐时刻平动、转动和耗散能量分解；捕获/回弹行为、断颈、重叠、接触时长及法向力曲线已有明确 PASS/FAIL 证据。
+
+### 4.4 串行 restart
 
 最终证据目录：
 
@@ -173,7 +203,7 @@ Float32 VTP 只用于轨迹和可视化，不能替代 restart 边界的双精�
 
 ## 5. 已知限制
 
-- 尚未重新执行基础捕获/回弹、速度扫描、异质表面能、壁面几何和 DMP 矩阵；旧 MFIX23 或迁移期记录不会自动转为 PASS。
+- 基础 normal 捕获/回弹的核心行为与法向力已执行；能量分解、速度扫描、异质表面能、壁面几何和 DMP 矩阵尚未完成。旧 MFIX23 或迁移期记录不会自动转为 PASS。
 - 当前 restart 正向判据覆盖双精度末态，但尚未在 restart 边界导出并逐字段比较 NEIGHBORS、PFT、PFR、JKR_CONTACT_STATE、墙面 facet 和 wall history；这是进入完整 restart 验收前的主要缺口。
 - Float32 VTP 不能用于边界历史的严格相等判断。
 - 当前实现使用固定墙面历史槽；预期工况中单颗粒不会同时接触超过 8 个壁面。超过 8 个壁面接触暂不测试，记录为范围限制。
@@ -195,7 +225,7 @@ Float32 VTP 只用于轨迹和可视化，不能替代 restart 边界的双精�
 - JKR 最大拉力、临界分离、零重叠和平衡关键点单测；
 尚未通过且阻塞完整生产验收：
 
-- 基础墙面/颗粒对物理与速度扫描；
+- 基础墙面/颗粒对能量分解与速度扫描；
 - 异质表面能和壁面几何；
 - 2-rank DMP；
 - restart 边界内部历史的双精度逐字段连续性。
