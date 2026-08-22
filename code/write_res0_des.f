@@ -51,8 +51,10 @@ CONTAINS
       DOUBLE PRECISION, DIMENSION(:,:), ALLOCATABLE :: n_histzTMP
 
       INTEGER :: I, LL, cc, CC_START, CC_END, nbid, size1
+      INTEGER, ALLOCATABLE :: PAIR_OWNER_GID(:),PAIR_NEIGH_GID(:)
 ! Set the version of the DES RES file.
       VERSION = 1.2
+      IF(USE_JKR) VERSION = 2.0
 
 ! Set the output dimension.
       lDIMN = merge(2,3,NO_K)
@@ -247,6 +249,43 @@ CONTAINS
       IF (SuperDEM) CALL WRITE_RES_cARRAY(lNEXT_REC,CONTACT_LAMBDA_B(:))
       IF (SuperDEM) CALL WRITE_RES_cARRAY(lNEXT_REC,CONTACT_LAMBDA_A_OLD(:))
       IF (SuperDEM) CALL WRITE_RES_cARRAY(lNEXT_REC,CONTACT_LAMBDA_B_OLD(:))
+
+! Version 2.0 appends spherical JKR histories after the official 1.2
+! collision layout. Neighbor slots retain the official global-ID map.
+      IF(USE_JKR) THEN
+         ALLOCATE(PAIR_OWNER_GID(SIZE(NEIGHBORS)))
+         ALLOCATE(PAIR_NEIGH_GID(SIZE(NEIGHBORS)))
+         PAIR_OWNER_GID = 0
+         PAIR_NEIGH_GID = 0
+         DO LL=1,MAX_PIP
+            IF(IS_NONEXISTENT(LL)) CYCLE
+            CC_START = 1
+            IF(LL > 1) CC_START = NEIGHBOR_INDEX(LL-1)
+            CC_END = NEIGHBOR_INDEX(LL)
+            DO CC=CC_START,CC_END-1
+               IF(IS_NONEXISTENT(NEIGHBORS(CC))) CYCLE
+               PAIR_OWNER_GID(CC) = IGLOBAL_ID(LL)
+               PAIR_NEIGH_GID(CC) = IGLOBAL_ID(NEIGHBORS(CC))
+            ENDDO
+         ENDDO
+         CALL WRITE_RES_cARRAY(lNEXT_REC,PAIR_OWNER_GID)
+         CALL WRITE_RES_cARRAY(lNEXT_REC,PAIR_NEIGH_GID)
+         DO LC1=1,lDIMN
+            CALL WRITE_RES_cARRAY(lNEXT_REC,PFR_NEIGHBOR(LC1,:))
+         ENDDO
+         CALL WRITE_RES_cARRAY(lNEXT_REC,JKR_CONTACT_STATE(:))
+         CALL WRITE_RES_DES(lNEXT_REC,COLLISION_ARRAY_MAX)
+         DO CC=1,COLLISION_ARRAY_MAX
+            CALL WRITE_RES_pARRAY(lNEXT_REC,WALL_COLLISION_FACET_ID(CC,:))
+            CALL WRITE_RES_pARRAY(lNEXT_REC,JKR_WALL_CONTACT_STATE(CC,:))
+            DO LC1=1,lDIMN
+               CALL WRITE_RES_pARRAY(lNEXT_REC,WALL_COLLISION_PFT(LC1,CC,:))
+               CALL WRITE_RES_pARRAY(lNEXT_REC,WALL_COLLISION_PFR(LC1,CC,:))
+            ENDDO
+         ENDDO
+         DEALLOCATE(PAIR_OWNER_GID)
+         DEALLOCATE(PAIR_NEIGH_GID)
+      ENDIF
 
       CALL WRITE_RES_DES(lNEXT_REC, DEM_BCMI)
       DO LC1=1, DEM_BCMI

@@ -1,11 +1,14 @@
 MODULE READ_RES0_DES_MOD
 
+#include "error.inc"
+
    use des_allocate, only: allocate_dem_mi, particle_grow_GluedSphereDEM
    use des_bc, only: dem_mi, dem_bcmi, dem_mi_time
    use des_rxns, only: des_x_s
    use des_thermo, only: des_t_s
    use discretelement
    use error_manager
+   use mpi_unpack_des, only: queue_pair_history
    use geometry, only: no_k
    use mfix_pic, only: MPPIC, DES_STAT_WT
    use param, only: dimension_n_s
@@ -26,7 +29,7 @@ CONTAINS
       use functions, only: is_nonexistent
       implicit none
 
-      INTEGER :: LC1, LC2, LL, II
+      INTEGER :: LC1, LC2, LL, II, CC
       INTEGER :: lDIMN, lNEXT_REC
 
       INTEGER :: lVAR_SIZE
@@ -48,12 +51,27 @@ CONTAINS
       DOUBLE PRECISION, DIMENSION(:,:), ALLOCATABLE :: n_histyTMP
       DOUBLE PRECISION, DIMENSION(:,:), ALLOCATABLE :: n_histzTMP
 
-      INTEGER :: size1, nbid
+      INTEGER :: size1, nbid, lWALL_SLOTS
+      INTEGER, ALLOCATABLE :: PAIR_OWNER_GID(:),PAIR_NEIGH_GID(:)
 
       lDIMN = merge(2,3,NO_K)
 
       CALL INIT_READ_RES_DES(trim(RUN_NAME), VERSION, lNEXT_REC)
 
+      IF((VERSION > 1.2 .AND. VERSION < 2.0) .OR. VERSION > 2.0) THEN
+         WRITE(ERR_MSG,"('Unsupported DES restart version ',F4.1)") VERSION
+         CALL LOG_ERROR()
+      ENDIF
+      IF(RUN_TYPE == 'RESTART_1') THEN
+         IF(USE_JKR .AND. VERSION < 2.0) THEN
+            WRITE(ERR_MSG,"('JKR RESTART_1 requires DES restart 2.0')")
+            CALL LOG_ERROR()
+         ENDIF
+         IF(.NOT.USE_JKR .AND. VERSION >= 2.0) THEN
+            WRITE(ERR_MSG,"('DES restart 2.0 requires USE_JKR=.TRUE.')")
+            CALL LOG_ERROR()
+         ENDIF
+      ENDIF
       CALL READ_RES_DES(lNEXT_REC, VTP_FINDEX)
       CALL READ_RES_DES(lNEXT_REC, TECPLOT_FINDEX)
 ! DTSOLID is not used anymore upon restart so that changes in particle
@@ -101,8 +119,11 @@ CONTAINS
 
       IF(VERSION >= 1.1) THEN
          CALL READ_RES_DES(lNEXT_REC, lVAR_SIZE)
+         IF(lVAR_SIZE > DES_USR_VAR_SIZE) THEN
+            WRITE(ERR_MSG,"('DES restart needs DES_USR_VAR_SIZE >= ',I0)") lVAR_SIZE
+            CALL LOG_ERROR()
+         ENDIF
          DO LC1=1, lVAR_SIZE
-            if(lVAR_SIZE <= DES_USR_VAR_SIZE) &
             CALL READ_RES_pARRAY(lNEXT_REC, DES_USR_VAR(LC1,:))
          ENDDO
       ENDIF
@@ -265,6 +286,55 @@ CONTAINS
              CALL READ_RES_cARRAY(lNEXT_REC, CONTACT_LAMBDA_B(:))
              CALL READ_RES_cARRAY(lNEXT_REC, CONTACT_LAMBDA_A_old(:))
              CALL READ_RES_cARRAY(lNEXT_REC, CONTACT_LAMBDA_B_old(:))
+         ENDIF
+
+! Version 2.0 appends spherical JKR histories after the complete
+! official 1.2 collision layout.
+         IF(VERSION >= 2.0) THEN
+            ALLOCATE(PAIR_OWNER_GID(SIZE(NEIGHBORS)))
+            ALLOCATE(PAIR_NEIGH_GID(SIZE(NEIGHBORS)))
+            CALL READ_RES_cARRAY(lNEXT_REC,PAIR_OWNER_GID)
+            CALL READ_RES_cARRAY(lNEXT_REC,PAIR_NEIGH_GID)
+            DO LC1=1,lDIMN
+               CALL READ_RES_cARRAY(lNEXT_REC,PFR_NEIGHBOR(LC1,:))
+            ENDDO
+            CALL READ_RES_cARRAY(lNEXT_REC,JKR_CONTACT_STATE(:))
+            DO CC=1,NEIGH_NUM
+               CALL QUEUE_PAIR_HISTORY(PAIR_OWNER_GID(CC), &
+                  PAIR_NEIGH_GID(CC),PFT_NEIGHBOR(:,CC), &
+                  PFR_NEIGHBOR(:,CC),JKR_CONTACT_STATE(CC))
+            ENDDO
+            DEALLOCATE(PAIR_OWNER_GID,PAIR_NEIGH_GID)
+            CALL READ_RES_DES(lNEXT_REC,lWALL_SLOTS)
+            IF(lWALL_SLOTS < 1) THEN
+               WRITE(ERR_MSG,"('Invalid JKR wall slot count ',I0)") lWALL_SLOTS
+               CALL LOG_ERROR()
+            ENDIF
+            IF(lWALL_SLOTS /= SIZE(WALL_COLLISION_FACET_ID,1)) THEN
+               DEALLOCATE(WALL_COLLISION_FACET_ID)
+               DEALLOCATE(WALL_COLLISION_PFT)
+               DEALLOCATE(WALL_COLLISION_PFR)
+               DEALLOCATE(JKR_WALL_CONTACT_STATE)
+               COLLISION_ARRAY_MAX = lWALL_SLOTS
+               ALLOCATE(WALL_COLLISION_FACET_ID(COLLISION_ARRAY_MAX,MAX_PIP))
+               ALLOCATE(WALL_COLLISION_PFT(DIMN,COLLISION_ARRAY_MAX,MAX_PIP))
+               ALLOCATE(WALL_COLLISION_PFR(DIMN,COLLISION_ARRAY_MAX,MAX_PIP))
+               ALLOCATE(JKR_WALL_CONTACT_STATE(COLLISION_ARRAY_MAX,MAX_PIP))
+            ENDIF
+            WALL_COLLISION_FACET_ID = -1
+            WALL_COLLISION_PFT = 0.0D0
+            WALL_COLLISION_PFR = 0.0D0
+            JKR_WALL_CONTACT_STATE = .FALSE.
+            DO CC=1,COLLISION_ARRAY_MAX
+               CALL READ_RES_pARRAY(lNEXT_REC,WALL_COLLISION_FACET_ID(CC,:))
+               CALL READ_RES_pARRAY(lNEXT_REC,JKR_WALL_CONTACT_STATE(CC,:))
+               DO LC1=1,lDIMN
+                  CALL READ_RES_pARRAY(lNEXT_REC,WALL_COLLISION_PFT(LC1,CC,:))
+                  CALL READ_RES_pARRAY(lNEXT_REC,WALL_COLLISION_PFR(LC1,CC,:))
+               ENDDO
+            ENDDO
+            PFR_NEIGHBOR_OLD = PFR_NEIGHBOR
+            JKR_CONTACT_STATE_OLD = JKR_CONTACT_STATE
          ENDIF
       ENDIF
 

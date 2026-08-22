@@ -251,3 +251,25 @@ Restart 待办：26.1.2 read_res0_des.f 在 restart 中的 DES_USR_VAR 数量大
 临时运行目录为 `/tmp/jkr26_dmp_pair_np1`、`/tmp/jkr26_dmp_pair_np2` 和 `/tmp/jkr26_dmp_wall_np2`，不进入 Git。
 
 上述结果验证 DMP 可运行及宏观串并行一致性，但尚未在所有权交换的四个指定断点直接导出 PFT/PFR/JKR state。因此“跨分区历史逐字段保持”仍列为分层验证待办，不以本 smoke test 代替。
+
+## 第三阶段模块 7：RESTART_1 历史格式
+
+日期：2026-08-22。
+
+- `USE_JKR=.FALSE.` 继续写 MFIX 26.1.2 官方 DES restart 1.2；`USE_JKR=.TRUE.` 写项目格式 2.0。2.0 保留完整官方 1.2 前缀，再追加 pair owner/neighbor global ID、PFR、JKR state，以及墙面 facet ID/PFT/PFR/state。
+- reader 先采用官方 `READ_PAR_COL` 完成 collision ownership 分配；由于官方 reader 不恢复旧 `NEIGHBOR_INDEX`，2.0 再按 global-ID pair 放入与 DMP 共用的 pending queue，首次官方邻居重建后恢复到有效 CC。墙历史通过 PARRAY 继续按 particle global ID 映射。
+- 旧 23.4.1 JKR 1.3 与新布局不兼容，reader 显式拒绝 1.3；JKR RESTART_1 不允许读取缺少历史的 1.2。RESTART_2 保留官方碰撞历史前 early return，可作为历史敏感性对照。
+- reader 对 `DES_USR_VAR_SIZE` 不足改为显式错误，避免官方旧逻辑跳过记录后继续错位读取。新 2.0 不承诺读取旧 JKR RES；兼容决定以明确失败代替静默误读。
+
+| 日期 | 工况 | 结果 | 证据/边界 |
+| --- | --- | --- | --- |
+| 2026-08-22 | 串行与 DMP 编译 | 通过 | 最新产物分别为 `code/build/mfixsolver` 与 `code/build_dmp/mfixsolver_dmp` |
+| 2026-08-22 | 等径两球 continuous vs 5 ns + RESTART_1 | 逐字节一致 | 双精度 CSV SHA-256 均为 `5b2823296d83d0471bbbfdc2827a8e8555856b24ff10e985a77dba85e53e2831` |
+| 2026-08-22 | 异径两球非零 PFR restart | 逐字节一致 | 5 ns 读回 PFT=`8.17869e-10 m`、PFR=`7.88762e-12 m`、state=TRUE；末态 SHA-256 均为 `8cf9c6fac93f7bce696d4d0ab56c569bd38f8d065bf3b8eda959f47fea32f309` |
+| 2026-08-22 | 墙面斜碰 continuous vs 0.2 us + RESTART_1 | 逐字节一致 | 双精度 CSV SHA-256 均为 `b3ad295807141728ce7580fda695aba6e261d1706edaa57a63ab29b51ba0f402` |
+| 2026-08-22 | RESTART_2 敏感性 | 通过对照 | 末态 SHA-256 `83a18505d2afc06b95743faaf48afb19ee5964f2e871cda89a8f01b61d1a4714`，与 continuous 不同 |
+| 2026-08-22 | 最终 `USE_JKR=.FALSE.` 墙 Hertz | 逐字节一致 | SHA-256 保持 `b560bb90ef4221b2c0799a64a59b0e0a4f83a33c295507c774d8391158284bc9` |
+| 2026-08-22 | 固定 2-rank continuous vs 2-rank RESTART_1 | 暂未通过 | 两者均正常完成，但末态 V 分量最大差约 `1.18e-4 m/s`；需用双精度断点快照区分官方 DMP restart 重排差异与 JKR queue 时序 |
+| 2026-08-22 | 串行写入、2-rank 读取 | 暂未通过 | 可完成但与串行 continuous 有可见偏差；不同分解兼容不列入当前通过项 |
+
+串行 RESTART_1 已覆盖 PFT、非零 PFR、pair neck state 和墙面历史；DMP restart 仍是验收阻塞项，不因运行完成而标记通过。
