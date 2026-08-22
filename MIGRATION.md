@@ -232,3 +232,22 @@ Restart 待办：26.1.2 read_res0_des.f 在 restart 中的 DES_USR_VAR 数量大
 | 2026-08-22 | 官方墙 Hertz vs 模块 5 后 solver | 逐字节一致 | SHA-256 仍为 `b560bb90ef4221b2c0799a64a59b0e0a4f83a33c295507c774d8391158284bc9` |
 
 尚需 validation-only 双精度快照直接证明邻居重建前后 PFT/PFR/state 连续；本模块不宣称 DMP 或 restart 已通过。
+
+## 第三阶段模块 6：DMP 所有权迁移
+
+日期：2026-08-22。
+
+- 基于 26.1.2 的 particle-owner packet 追加墙面 facet ID、PFT、PFR 和 JKR state；基于现有 11-field pair packet 发送 global owner/neighbor ID、网格位置、PFT、PFR 和 pair state。
+- pair history 不在 unpack 时猜测 CC，而是按 global-ID pair 暂存；官方邻居重建产生有效 CC 后再恢复。同向向量保持，反向 owner 映射时 PFT/PFR 取反，state 不取反。
+- `USE_JKR=.FALSE.` 时不发送新增 pair/wall 历史，保持官方 26.1.2 owner migration 路径。
+- DMP 粒子包容量在初始化时由墙面槽数固定。为避免某一 rank 动态扩容后产生不一致包布局，JKR DMP 在 8 个墙面 facet slot 全部耗尽时显式停止；串行仍保留官方动态扩容。该限制须在后续可配置容量设计中解除。
+
+| 日期 | 工况 | 结果 | 证据/边界 |
+| --- | --- | --- | --- |
+| 2026-08-22 | DMP solver 编译 | 通过 | MFIX 26.1.2、GNU Fortran 15.3.0、MPI 3.1；`ENABLE_MPI=ON` |
+| 2026-08-22 | `pair_new_contact_dmp`，1 rank vs 2 ranks | 通过 smoke | 两者均完成 0.65 us；4 粒子最终 X/Y/Z/U/V/W 双精度 CSV 逐项差值为 0 |
+| 2026-08-22 | `wall_cross_dmp`，2 ranks | 通过 smoke | 单粒子完成 0.15 us；日志无 error、warning、abort、NaN 或 overflow |
+
+临时运行目录为 `/tmp/jkr26_dmp_pair_np1`、`/tmp/jkr26_dmp_pair_np2` 和 `/tmp/jkr26_dmp_wall_np2`，不进入 Git。
+
+上述结果验证 DMP 可运行及宏观串并行一致性，但尚未在所有权交换的四个指定断点直接导出 PFT/PFR/JKR state。因此“跨分区历史逐字段保持”仍列为分层验证待办，不以本 smoke test 代替。

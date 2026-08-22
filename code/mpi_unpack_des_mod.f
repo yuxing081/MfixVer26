@@ -11,6 +11,15 @@
 
       PUBLIC :: DESMPI_UNPACK_PARCROSS, DESMPI_UNPACK_GHOSTPAR
       PUBLIC :: unpack_dbuf
+      PUBLIC :: RESTORE_PENDING_PAIR_HISTORY
+
+      INTEGER :: PENDING_PAIR_COUNT = 0
+      INTEGER :: PENDING_PAIR_CAPACITY = 0
+      INTEGER, ALLOCATABLE :: PENDING_PAIR_OWNER_GID(:)
+      INTEGER, ALLOCATABLE :: PENDING_PAIR_NEIGH_GID(:)
+      DOUBLE PRECISION, ALLOCATABLE :: PENDING_PAIR_PFT(:,:)
+      DOUBLE PRECISION, ALLOCATABLE :: PENDING_PAIR_PFR(:,:)
+      LOGICAL, ALLOCATABLE :: PENDING_PAIR_STATE(:)
 
       interface unpack_dbuf
          module procedure unpack_db0 ! real scalars
@@ -395,6 +404,8 @@
       integer :: cc,num_neighborlists_sent,nn,ll
 
       logical :: tmp
+      DOUBLE PRECISION :: PAIR_PFT_IN(3), PAIR_PFR_IN(3)
+      LOGICAL :: PAIR_STATE_IN
 !......................................................................!
 
 ! loop through particles and locate them and make changes
@@ -511,6 +522,15 @@
          IF(SAVE_PART_RRATES)  call unpack_dbuf(lbuf,Part_RRates_out(llocpar,:),pface)
 ! 37) Residence time
          call unpack_dbuf(lbuf,residence_time(llocpar),pface)
+! 37a) Spherical JKR wall histories attached to this particle owner.
+         IF(USE_JKR) THEN
+            DO CC=1,COLLISION_ARRAY_MAX
+               CALL UNPACK_DBUF(lbuf,WALL_COLLISION_FACET_ID(CC,llocpar),pface)
+               CALL UNPACK_DBUF(lbuf,WALL_COLLISION_PFT(:,CC,llocpar),pface)
+               CALL UNPACK_DBUF(lbuf,WALL_COLLISION_PFR(:,CC,llocpar),pface)
+               CALL UNPACK_DBUF(lbuf,JKR_WALL_CONTACT_STATE(CC,llocpar),pface)
+            ENDDO
+         ENDIF
 ! 38) SuperDEM
          IF(SuperDEM) THEN
             call unpack_dbuf(lbuf,super_r(llocpar,1:3),pface)
@@ -587,18 +607,16 @@
             endif
          endif
 
-! If the neighbor particle is a 'real' particle on this processor, then
-! the pair data may already exist. Check before adding it.
-! Create a new neighbor pair if it was not matched to an exiting pair.
-
-! @renjieke, temporarily turn off this to solve index out of bound, but I do think this should be
-! include during exchange. if llocpar and lneigh are ghost particles in this rank before, their
-! neighbor_index should have been set and will not trigger the issue in add_pair.
-
-      !    cc = add_pair(llocpar,lneigh)
-! 44) Tangential collision history.
-      ! call unpack_dbuf(lbuf,pft_neighbor(:,cc),pface)
-      ! @renjieke, reshape the pdf_neighbor to (llocpar, lneigh, 3)
+! Queue pair history by global IDs. It is restored only after the next
+! official neighbor rebuild has created valid CC slots on this owner.
+! 44) Spherical JKR pair histories.
+         IF(USE_JKR) THEN
+            CALL UNPACK_DBUF(lbuf,PAIR_PFT_IN,pface)
+            CALL UNPACK_DBUF(lbuf,PAIR_PFR_IN,pface)
+            CALL UNPACK_DBUF(lbuf,PAIR_STATE_IN,pface)
+            CALL QUEUE_PAIR_HISTORY(lparid,lneighid,PAIR_PFT_IN, &
+               PAIR_PFR_IN,PAIR_STATE_IN)
+         ENDIF
 ! 45) Superquadric contact points
          IF(SuperDEM) THEN
             call unpack_dbuf(lbuf,contact_point_a(:,cc),pface)
@@ -803,5 +821,111 @@
 
       return
       end subroutine unpack_l0
+
+
+
+! Queue directed pair history until NEIGHBOUR has rebuilt valid CC slots.
+      SUBROUTINE QUEUE_PAIR_HISTORY(OWNER_GID,NEIGH_GID,PFT,PFR,STATE)
+      IMPLICIT NONE
+      INTEGER, INTENT(IN) :: OWNER_GID,NEIGH_GID
+      DOUBLE PRECISION, INTENT(IN) :: PFT(3),PFR(3)
+      LOGICAL, INTENT(IN) :: STATE
+
+      IF(PENDING_PAIR_COUNT >= PENDING_PAIR_CAPACITY) &
+         CALL GROW_PENDING_PAIR_HISTORY
+      PENDING_PAIR_COUNT = PENDING_PAIR_COUNT + 1
+      PENDING_PAIR_OWNER_GID(PENDING_PAIR_COUNT) = OWNER_GID
+      PENDING_PAIR_NEIGH_GID(PENDING_PAIR_COUNT) = NEIGH_GID
+      PENDING_PAIR_PFT(:,PENDING_PAIR_COUNT) = PFT
+      PENDING_PAIR_PFR(:,PENDING_PAIR_COUNT) = PFR
+      PENDING_PAIR_STATE(PENDING_PAIR_COUNT) = STATE
+      END SUBROUTINE QUEUE_PAIR_HISTORY
+
+
+      SUBROUTINE GROW_PENDING_PAIR_HISTORY
+      IMPLICIT NONE
+      INTEGER :: NEW_CAPACITY
+      INTEGER, ALLOCATABLE :: TMP_I(:)
+      DOUBLE PRECISION, ALLOCATABLE :: TMP_D(:,:)
+      LOGICAL, ALLOCATABLE :: TMP_L(:)
+
+      NEW_CAPACITY = MAX(16,2*PENDING_PAIR_CAPACITY)
+
+      ALLOCATE(TMP_I(NEW_CAPACITY))
+      IF(PENDING_PAIR_COUNT > 0) TMP_I(1:PENDING_PAIR_COUNT) = &
+         PENDING_PAIR_OWNER_GID(1:PENDING_PAIR_COUNT)
+      CALL MOVE_ALLOC(TMP_I,PENDING_PAIR_OWNER_GID)
+
+      ALLOCATE(TMP_I(NEW_CAPACITY))
+      IF(PENDING_PAIR_COUNT > 0) TMP_I(1:PENDING_PAIR_COUNT) = &
+         PENDING_PAIR_NEIGH_GID(1:PENDING_PAIR_COUNT)
+      CALL MOVE_ALLOC(TMP_I,PENDING_PAIR_NEIGH_GID)
+
+      ALLOCATE(TMP_D(3,NEW_CAPACITY))
+      IF(PENDING_PAIR_COUNT > 0) TMP_D(:,1:PENDING_PAIR_COUNT) = &
+         PENDING_PAIR_PFT(:,1:PENDING_PAIR_COUNT)
+      CALL MOVE_ALLOC(TMP_D,PENDING_PAIR_PFT)
+
+      ALLOCATE(TMP_D(3,NEW_CAPACITY))
+      IF(PENDING_PAIR_COUNT > 0) TMP_D(:,1:PENDING_PAIR_COUNT) = &
+         PENDING_PAIR_PFR(:,1:PENDING_PAIR_COUNT)
+      CALL MOVE_ALLOC(TMP_D,PENDING_PAIR_PFR)
+
+      ALLOCATE(TMP_L(NEW_CAPACITY))
+      IF(PENDING_PAIR_COUNT > 0) TMP_L(1:PENDING_PAIR_COUNT) = &
+         PENDING_PAIR_STATE(1:PENDING_PAIR_COUNT)
+      CALL MOVE_ALLOC(TMP_L,PENDING_PAIR_STATE)
+
+      PENDING_PAIR_CAPACITY = NEW_CAPACITY
+      END SUBROUTINE GROW_PENDING_PAIR_HISTORY
+
+
+! Restore queued histories onto the official neighbor layout by global ID.
+      SUBROUTINE RESTORE_PENDING_PAIR_HISTORY
+      USE DISCRETELEMENT
+      IMPLICIT NONE
+      INTEGER :: N,LL,OWNER,NEIGH,CC,CC_START,CC_END
+      LOGICAL :: FOUND
+
+      DO N=1,PENDING_PAIR_COUNT
+         OWNER = 0
+         NEIGH = 0
+         DO LL=1,MAX_PIP
+            IF(IGLOBAL_ID(LL) == PENDING_PAIR_OWNER_GID(N)) OWNER = LL
+            IF(IGLOBAL_ID(LL) == PENDING_PAIR_NEIGH_GID(N)) NEIGH = LL
+         ENDDO
+         IF(OWNER == 0 .OR. NEIGH == 0) CYCLE
+
+         FOUND = .FALSE.
+         CC_START = 1
+         IF(OWNER > 1) CC_START = NEIGHBOR_INDEX(OWNER-1)
+         CC_END = NEIGHBOR_INDEX(OWNER)
+         DO CC=CC_START,CC_END-1
+            IF(NEIGHBORS(CC) == NEIGH) THEN
+               PFT_NEIGHBOR(:,CC) = PENDING_PAIR_PFT(:,N)
+               PFR_NEIGHBOR(:,CC) = PENDING_PAIR_PFR(:,N)
+               JKR_CONTACT_STATE(CC) = PENDING_PAIR_STATE(N)
+               FOUND = .TRUE.
+               EXIT
+            ENDIF
+         ENDDO
+
+         IF(.NOT.FOUND) THEN
+            CC_START = 1
+            IF(NEIGH > 1) CC_START = NEIGHBOR_INDEX(NEIGH-1)
+            CC_END = NEIGHBOR_INDEX(NEIGH)
+            DO CC=CC_START,CC_END-1
+               IF(NEIGHBORS(CC) == OWNER) THEN
+                  PFT_NEIGHBOR(:,CC) = -PENDING_PAIR_PFT(:,N)
+                  PFR_NEIGHBOR(:,CC) = -PENDING_PAIR_PFR(:,N)
+                  JKR_CONTACT_STATE(CC) = PENDING_PAIR_STATE(N)
+                  EXIT
+               ENDIF
+            ENDDO
+         ENDIF
+      ENDDO
+
+      PENDING_PAIR_COUNT = 0
+      END SUBROUTINE RESTORE_PENDING_PAIR_HISTORY
 
       end module mpi_unpack_des

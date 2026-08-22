@@ -1,6 +1,7 @@
 /model/
 build/
 code/build/
+code/build*/
 validation/results/*
 !validation/results/.gitkeep
 

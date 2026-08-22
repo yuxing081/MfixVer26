@@ -896,6 +896,13 @@ contains
 
 ! Last resort... grow the collision array
       if(-1 == free_index) then
+! The DMP particle packet is sized from COLLISION_ARRAY_MAX during
+! initialization. A rank-local resize would make packet layouts differ
+! across ranks, so fail explicitly instead of corrupting wall history.
+         IF(USE_JKR .AND. NUMPES > 1) THEN
+            WRITE(ERR_MSG, 1090) COLLISION_ARRAY_MAX
+            CALL LOG_ERROR()
+         ENDIF
          free_index=COLLISION_ARRAY_MAX+1
          COLLISION_ARRAY_MAX = 2*COLLISION_ARRAY_MAX
          CALL GROW_WALL_COLLISION(COLLISION_ARRAY_MAX)
@@ -908,6 +915,10 @@ contains
       JKR_WALL_CONTACT_STATE(free_index,LLL) = .FALSE.
       get_collision(:) = wall_collision_PFT(:,free_index,LLL)
       return
+
+ 1090 FORMAT('JKR DMP wall-history capacity exhausted at ',I0, &
+         ' facet slots per particle. Increase the initial capacity ', &
+         'before MPI initialization.')
 
       END FUNCTION GET_COLLISION
 

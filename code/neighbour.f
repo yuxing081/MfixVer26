@@ -26,6 +26,7 @@ CONTAINS
       USE param1
       USE discretelement
       use desgrid
+      USE MPI_UNPACK_DES, ONLY: RESTORE_PENDING_PAIR_HISTORY
       Use des_thermo
       IMPLICIT NONE
 !-----------------------------------------------
@@ -152,6 +153,10 @@ LOGICAL :: found
          enddo
       enddo
 !$omp end parallel do
+
+! Apply DMP owner-migration histories only after valid CC slots exist.
+      IF(USE_JKR) CALL RESTORE_PENDING_PAIR_HISTORY
+
 
 ! resetting do_nsearch to false here since neighbor search will have
 ! just been invoked

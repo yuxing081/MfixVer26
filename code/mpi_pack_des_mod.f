@@ -412,6 +412,15 @@
             IF(SAVE_PART_RRATES)  call pack_dbuf(lbuf,Part_RRates_out(lcurpar,:),pface)
 ! 37) Residence time
             call pack_dbuf(lbuf,RESIDENCE_TIME(lcurpar),pface)
+! 37a) Spherical JKR wall histories attached to this particle owner.
+            IF(USE_JKR) THEN
+               DO CC=1,COLLISION_ARRAY_MAX
+                  CALL PACK_DBUF(lbuf,WALL_COLLISION_FACET_ID(CC,lcurpar),pface)
+                  CALL PACK_DBUF(lbuf,WALL_COLLISION_PFT(:,CC,lcurpar),pface)
+                  CALL PACK_DBUF(lbuf,WALL_COLLISION_PFR(:,CC,lcurpar),pface)
+                  CALL PACK_DBUF(lbuf,JKR_WALL_CONTACT_STATE(CC,lcurpar),pface)
+               ENDDO
+            ENDIF
 ! 38) SuperDEM
             IF(SuperDEM) THEN
                call pack_dbuf(lbuf,super_r(lcurpar,:),pface)
@@ -485,6 +494,7 @@
       num_neighborlists_to_send = 0
 
       tmp_max_pip = 0
+      IF(USE_JKR) tmp_max_pip = max_pip
       ! if(flexible_gsp) tmp_max_pip = max_pip
 
       do lcurpar = 1, tmp_max_pip
@@ -514,9 +524,12 @@
 ! 43) DES grid IJK of cell containing the neighbor particle.
             call pack_dbuf(lbuf,dg_ijkconv(dg_pijkprv(lneigh),pface,     &
                ineighproc(pface)),pface)
-! 44) Tangential collision history.
-            ! call pack_dbuf(lbuf,PFT_NEIGHBOR(:,CC),pface)
-            ! @renjieke, it cannot be CC, resize the shape to use (lcurpar,lneigh)
+! 44) Spherical JKR pair histories in the directed owner frame.
+            IF(USE_JKR) THEN
+               CALL PACK_DBUF(lbuf,PFT_NEIGHBOR(:,CC),pface)
+               CALL PACK_DBUF(lbuf,PFR_NEIGHBOR(:,CC),pface)
+               CALL PACK_DBUF(lbuf,JKR_CONTACT_STATE(CC),pface)
+            ENDIF
 ! 45) Superquadric contact points
             IF(SuperDEM) THEN
                call  pack_dbuf(lbuf,contact_point_A(:,CC),pface)
