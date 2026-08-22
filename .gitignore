@@ -1,0 +1,40 @@
+/model/
+build/
+code/build/
+validation/results/*
+!validation/results/.gitkeep
+
+# Solver executables and libraries
+mfixsolver
+mfixsolver_*
+*.so
+*.a
+*.mod
+
+# MFIX runtime output
+*.RES
+*.SP*
+*.LOG
+*.OUT
+*.VTK
+*.VTP
+*.PVD
+*.vtu
+*.vtp
+*.pvd
+
+# Python and test caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Build-system and temporary comparison files
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+*.diff
+*.patch.tmp
+*.orig
+*.rej
+*~

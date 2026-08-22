@@ -1,0 +1,150 @@
+# JKR 向 MFIX 26.1.2 迁移记录
+
+## 当前状态
+
+- 阶段：第二阶段项目基线已建立；尚未修改生产物理。
+- 模型范围：仅球形颗粒；SuperDEM/GSP 异形颗粒不做 JKR 适配。
+- restart 原则：采用 MFIX 26.1.2 官方修复和 global-ID 映射，PFR/JKR state/wall history 仿照官方 PFT 生命周期扩展，不自行开发另一套邻居 restart 映射。
+- 验证边界：能量统计、DES_USR_VAR(2:31) 和历史 seed 只放在 validation 的具体 case 或 analysis 工具中。
+- 迁移开始日期：2026-08-22。
+- 新项目根目录：/home/yuxing/mfix/MfixVer26。
+- MFIX 26.1.2 官方安装源码：/home/yuxing/miniforge3/envs/mfix-26.1.2/share/mfix/src。
+- 优先基准快照：/home/yuxing/mfix/MfixVer26/model；与安装源码的 model/ 逐文件比较一致。
+- 旧 MFIX 23.4.1 基准：/home/yuxing/miniforge3/envs/mfix-23.4.1/share/mfix/src。
+- 旧 JKR 仓库：/home/yuxing/mfix/P3/JKR/versions/code。
+- 旧 JKR 分支/提交：jkr-cc-state-refactor，ea55027498a4b939a2982cbb77d137201b034ffc（Expand the useful range of γ）。
+- 旧工作树：dirty；仅 calc_force_dem.f 有未提交修改（18 additions、3 deletions），内容为 restart 回归专用 PFR seed 和 DES_USR_VAR(23:31) 力/力矩诊断，不属于生产物理。
+- 已核验工具链：MFIX 26.1.2、GNU Fortran 15.3.0、CMake 4.2.3；构建入口为激活 mfix-26.1.2 环境后的 build_mfixsolver。mpifort wrapper 存在，但必须在完整激活的 conda 环境中再次验证 DMP 构建。
+
+本项目只维护相对于 MFIX 26.1.2 修改或新增的文件。不得把 23.4.1 文件整份覆盖到 26.1.2，也不得修改 conda 环境中的官方源码。
+
+## 第一阶段结论
+
+26.1.2 的接口变化较大，不能直接开始移植：颗粒和墙面接触力路径已加入 GSP 等新版逻辑；restart 的邻居身份由 23.4.1 的二维接触对改为一维 owner-neighbor 全局 ID 映射；DMP pair packet 虽保留框架，但 pair 循环、ADD_PAIR 和 PFT pack/unpack 在官方 26.1.2 中仍被禁用或注释。第二阶段只能复制下表中确定需要修改的 26.1.2 文件，第三阶段必须逐模块语义重写和编译验证。
+
+## 文件迁移矩阵
+
+| 旧文件或旧意图 | 26.1.2 对应文件 | 修改目的 | 上游状态 | 迁移决定 | 风险 |
+| --- | --- | --- | --- | --- | --- |
+| allocate_arrays.f | model/allocate_arrays.f | 释放 PFR、pair/wall JKR state 和 wall PFR | 新版仅处理原生数组 | 在新版 DEM deallocate 路径增量追加 | 中：生命周期遗漏 |
+| calc_collision_wall_mod.f | model/des/calc_collision_wall_mod.f | 墙面 JKR、负重叠颈部、PFT/PFR、滚动力矩、facet state | 新版有 STL、CFRELVEL_WALL、GSP、Hertz/VDW，无 JKR/PFR/state | 基于新版接口语义重写；诊断拆出 | 极高：facet slot、投影和 GSP 分支 |
+| calc_force_dem.f | model/des/calc_force_dem.f | Chen/JKR 法向力、异质表面能、PFT/PFR、滚动力矩、neck state | 新版已重构 Hertz/VDW/GSP，无 JKR/PFR/state | 完全语义重写；USE_JKR=.FALSE. 必须走未改动的原生 Hertz/LSD 路径 | 极高：物理分支和新版数据流 |
+| cfnewvalues.f | model/des/cfnewvalues.f | 旧版仅调用 energy audit step | 新版为 GSP state/integrator | 生产代码采用官方文件；审计调用放 validation-only 构建 | 低 |
+| check_solids_dem.f | model/check_data/check_solids_dem.f | JKR 参数、组合和等效量检查 | 新版只有原生 collision/cohesion/Hamaker 检查 | 在新版检查框架增量重写 | 中 |
+| des_allocate_mod.f | model/des/des_allocate_mod.f | 分配/grow PFR、pair/wall state；ADD_PAIR 避免重复 slot | 新版仅分配 PFT、wall facet/PFT 和 SuperDEM 历史 | 扩展新版 allocate/grow/deallocate/ADD_PAIR | 高：CC 重排和重复接触 |
+| des_energy_audit.f | 无官方对应 | 接触势能及阻尼、滑移、滚动损失的 MPI 审计 | 上游无实现 | 不进入生产 code/；移至 validation/analysis，仅显式验证构建启用 | 中 |
+| des_init_namelist.f | model/des/des_init_namelist.f | USE_JKR、表面能、临界滚动角、安全系数及默认值 | 新版仅有 Hamaker/VDW 参数 | 在新版默认值路径追加；默认 USE_JKR=.FALSE. | 中 |
+| desgrid_mod.f | model/des/desgrid_mod.f | half-cell 搜索阈值和跨 rank 对称接触对 | 旧 4*MAX_RADIUS 修正未上游化；26.1.2 仍为 2*MAX_RADIUS，单侧过滤仍存在 | 在新版邻居构建上语义重做并设专项 DMP 测试 | 极高 |
+| desnamelist.inc | model/include/desnamelist.inc | 声明 JKR 输入参数 | 26.1.2 无 JKR 声明 | 仅追加所需声明，不复制旧 include | 低 |
+| discretelement_mod.f | model/des/discretelement_mod.f | JKR 派生矩阵、逐颗粒表面能访问、PFR、pair/wall state | 新版仅有 PFT、wall facet/PFT、Hamaker/phase surface energy | 增量加入明确的数据布局和访问函数 | 高 |
+| mpi_init_des_mod.f | model/des/mpi_init_des_mod.f | particle/pair packet 尺寸 | 新版 pair size 为 11，SuperDEM 另加 8；无 JKR/wall history | 依据唯一字段清单重新计算 packet size | 极高 |
+| mpi_pack_des_mod.f | model/des/mpi_pack_des_mod.f | pair PFT/PFR/state 与粒子附着 wall history 打包 | 新版 pair 循环实际停用，PFT pack 被注释 | 保留新版迁移框架，重新启用 pair 协议并增量打包 | 极高 |
+| mpi_unpack_des_mod.f | model/des/mpi_unpack_des_mod.f | 对称恢复 pair/wall history 和 ADD_PAIR slot | 新版 ADD_PAIR/PFT unpack 被注释 | 与 pack 使用同一协议表语义重写 | 极高 |
+| neighbour.f | model/des/neighbour.f | 邻居重建时恢复 PFT/PFR/state；owner 反转时向量反号 | 新版仅同向恢复 PFT 和 SuperDEM history | 采用新版重建，再追加 PFR/state 及 reversed-owner 规则 | 极高 |
+| 无旧独立文件；由历史迁移需求发现 | model/des/des_functions.f | 粒子排序/空间重排时 remap CC 历史 | 新版只 remap PFT 和 SuperDEM history | 新增到需修改清单；扩展所有排序/exchange remap 路径 | 极高 |
+| read_namelist.f | model/read_namelist.f | 旧差异只有末尾空白/换行 | 无需上游替代 | 废弃旧修改；默认不复制，只有编译证明 parser 需要挂接时才最小修改 | 低 |
+| read_res0_des.f | model/des/read_res0_des.f | 读取 PFR、pair/wall state、facet 和 wall PFT/PFR | 新版已读取 global IDs、neighbor/PFT，并由官方 map 重建邻居 | 在新版布局和 map 上追加版本化字段 | 极高 |
+| write_res0_des.f | model/des/write_res0_des.f | 写入 PFR、pair/wall state、facet 和 wall PFT/PFR | 新版写 global neighbor ID/PFT；不写旧式 NEIGHBOR_INDEX | 在新版布局末尾追加字段，不迁移旧写法 | 极高 |
+| 23.4.1 read_res1_des_mod.f restart 修补意图 | model/des/read_res1_des_mod.f | global-to-local collision owner/neighbor map | 26.1.2 已实现 READ_PAR_COL → MAP_cARRAY_TO_PROC → GLOBAL_TO_LOC_COL；23.4.1 对应循环被 FIXME 注释 | 完全采用官方 26.1.2；不复制到 code/ | 低 |
+| 旧式二维 iPAR_COL 和直接保存 NEIGHBOR_INDEX | 新版一维 neighbor global ID + 重建 index | 旧 restart 接触身份格式 | 已被新版官方设计替代 | 废弃 | 高 |
+
+## 第二阶段复制到 code/ 的文件
+
+以下 16 个 MFIX 26.1.2 文件已按 basename 复制到扁平 code/ 顶层。来源路径保留如下；扁平布局是 MFIX CMake 的 UDF source-replacement 规则要求：
+
+1. model/allocate_arrays.f
+2. model/check_data/check_solids_dem.f
+3. model/include/desnamelist.inc
+4. model/des/calc_collision_wall_mod.f
+5. model/des/calc_force_dem.f
+6. model/des/des_allocate_mod.f
+7. model/des/des_functions.f
+8. model/des/des_init_namelist.f
+9. model/des/desgrid_mod.f
+10. model/des/discretelement_mod.f
+11. model/des/mpi_init_des_mod.f
+12. model/des/mpi_pack_des_mod.f
+13. model/des/mpi_unpack_des_mod.f
+14. model/des/neighbour.f
+15. model/des/read_res0_des.f
+16. model/des/write_res0_des.f
+
+复制后逐文件 SHA-256 校验通过 16/16，当前 code/ 与 MFIX 26.1.2 官方来源完全一致。
+
+model/read_namelist.f 暂不复制；read_res1_des_mod.f 和 write_res1_des_mod.f 采用官方实现；cfnewvalues.f 采用官方实现；des_energy_audit.f 仅作为验证工具迁入 validation/analysis。
+
+## 物理和数据布局决定
+
+- 生产 JKR 只支持球形颗粒。SuperDEM/GSP 分支保持官方行为，不新增 JKR 数据、力或历史处理。
+- USE_JKR=.FALSE. 是硬兼容边界：不得改变 26.1.2 原生 Hertz/LSD 的力、历史更新、墙面接触和 DMP 行为。
+- PFT/PFR 是有方向的 contact-pair CC 历史。owner 从 (LL,I) 反转为 (I,LL) 时二者都反号；JKR_CONTACT_STATE 是无方向逻辑状态，不反号。
+- 墙面 facet/PFT/PFR/state 是粒子附着历史，随 particle packet 迁移；颗粒–颗粒 PFT/PFR/state 属于 pair packet。
+- 旧版通过 DES_USR_VAR(1,:) 搭载逐颗粒表面能。实现前必须验证其在 26.1.2 的 DMP/restart 生命周期；不能证明稳定语义时不得直接沿用。
+- 邻居重建、粒子排序/所有权迁移、restart global-to-local remap 必须共享同一 global ID、CC owner 和向量方向规则。
+- energy audit、历史 seed、ghost/slot/force 的 DES_USR_VAR 导出均属于验证边界，不得无条件写入生产力计算。
+
+## Restart 格式与兼容性决定
+
+| 来源/模式 | 决定 |
+| --- | --- |
+| MFIX 26.1.2 官方 DES RES 1.2 | 新 reader 可读取；缺失的 PFR/JKR/wall history 明确初始化为空，因此不能声称是活动 JKR 接触的连续续算 |
+| 旧 MFIX 23.4.1 JKR DES RES 1.3 | 不直接兼容；其二维接触身份、NEIGHBOR_INDEX 和字段顺序与 26.1.2 不同。需要时另做离线转换器 |
+| 新 JKR/MFIX 26.1.2 格式 | 使用独立 DES RES 2.0 标识；以官方一维 global neighbor ID/map 为基底，在版本化尾部写 PFR、pair state、wall facet/PFT/PFR/state |
+| RESTART_1 | 必须恢复全部接触历史，并在首次邻居搜索和首次接触力计算前后验证 |
+| RESTART_2 | 保留官方“重新初始化、不恢复接触历史”的语义，只作为敏感性对照 |
+
+实现 DES RES 2.0 前，必须先写字段顺序表、元素类型/维度、串行与 DMP scatter 规则，以及 1.2/1.3/2.0 的显式 version gate 测试。
+
+## 已有验证证据
+
+| 日期 | 基准/工况 | 结果 | 结论 |
+| --- | --- | --- | --- |
+| 2026-08-21 | MFIX 23.4.1 旧 JKR，restart_history continuous vs 5 ns RESTART_1 | 失败 | 约 6 ns 首先出现 PFT 差异；PFR 在续算后接近零，与 23.4.1 GLOBAL_TO_LOC_COL 被注释一致 |
+| 2026-08-21 | 同一工况的 RESTART_2 | 预期不一致，敏感性对照有效 | 工况确实依赖历史 |
+| 2026-08-22 | MfixVer26/model vs 安装的 26.1.2 model | 一致 | 前者可作为只读官方快照 |
+| 2026-08-22 | code/ 16 个官方同名覆盖文件的串行基线构建 | 通过 | MFIX 26.1.2、GNU Fortran 15.3.0；solver SHA-256 e8da3c67cf2bb1b7e99299c65b70ccdfe78a9cbf9373a792a152947d498ef3d6 |
+| 2026-08-22 | MFIX 26.1.2 自定义 JKR 编译/运行 | 未执行 | 第二阶段仅编译官方内容覆盖基线，不能据此宣称 JKR、restart 或物理通过 |
+
+现有 restart 回归只覆盖串行颗粒–颗粒、正重叠切分点；尚未覆盖负重叠颈部、墙面历史、DMP owner migration、不同 MPI 分解和双精度 restart 边界快照。VTP Float32 不能作为历史保存正确性的唯一证据。
+
+## 最大风险
+
+1. DMP pair history 不是“追加四个字段”即可完成：官方 26.1.2 的 pair 循环、ADD_PAIR 和 PFT pack/unpack 当前没有形成有效闭环。
+2. calc_force_dem.f 和 calc_collision_wall_mod.f 已大幅重构，必须逐物理分支重写，并证明 USE_JKR=.FALSE. 零差异。
+3. half-cell 4*MAX_RADIUS 修正和跨 rank 对称 pair policy 均未被确认上游解决，可能造成漏接触、重复接触或 rank-dependent history。
+4. restart、neighbor rebuild、des_functions 排序/remap 和 DMP owner migration 对同一 CC 历史有多条入口，任何遗漏都会造成静默错位。
+5. 旧 JKR RES 1.3 与新版官方 RES 1.2 不能按版本号大小推断兼容。
+6. 旧力学文件混有生产逻辑、能量审计和验证 seed/导出，迁移时必须拆分。
+
+## 建议迁移顺序
+
+1. 建立项目和原生 26.1.2 baseline，固定串行 USE_JKR=.FALSE. 对照。
+2. 迁移 namelist、参数检查、数据声明、分配/grow/deallocate，并立即编译。
+3. 明确逐颗粒表面能字段及其 DMP/restart 生命周期，实现异质等效参数。
+4. 在新版 calc_force_dem.f 上实现颗粒–颗粒 JKR，再加入 PFT/PFR/rolling/state。
+5. 在新版墙面接口上实现 JKR 和 wall history，先串行验证 facet slot 连续性。
+6. 扩展 neighbour.f 和 des_functions.f，验证同向/反向 owner 的历史映射。
+7. 用单一协议表重写 DMP packet 的 size、pack、unpack，测试固定两进程所有权迁移。
+8. 基于官方 collision restart map 实现 DES RES 2.0，完成串行后再做 DMP restart。
+9. 最后加入隔离的 energy audit 和双精度边界诊断。
+10. 两颗粒、墙面、restart、DMP 通过后，再运行小规模团聚体集成测试。
+
+## 已知限制和待完成事项
+
+- 新 Git 仓库、code/ 和 validation/{cases,analysis,results} 已建立。
+- 16 个 26.1.2 生产源码已复制但内容未修改；第三阶段尚未开始。
+- 串行官方内容覆盖基线已编译；SMP/DMP 和后续 JKR 修改尚未编译。
+- mpifort 必须在完整激活的 mfix-26.1.2 环境中重新验证。
+- 尚未决定旧 JKR 1.3 restart 是否值得开发离线转换器；默认不兼容。
+- 尚未生成旧存档删除清单，也未删除、移动或压缩任何旧文件。
+
+## 第二阶段记录
+
+日期：2026-08-22。
+
+- 在 /home/yuxing/mfix/MfixVer26 初始化 main 分支 Git 仓库。
+- 建立扁平 code/、validation/cases、validation/analysis 和 validation/results。
+- model/ 作为现有 26.1.2 官方只读快照保留，但由 .gitignore 排除。
+- 创建 README.md 和 .gitignore；大型结果、solver/build、MFIX 输出、Python 缓存和临时比较文件均不进入 Git。
+- code/ 的 16 个文件均直接复制自本地 model/，SHA-256 与官方来源一致。
+- 本阶段已成功编译串行官方内容覆盖基线；没有运行工况或修改 Fortran，因此没有新的物理或 restart 通过结论。
