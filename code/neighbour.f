@@ -33,6 +33,7 @@ CONTAINS
 !-----------------------------------------------
 
 INTEGER :: cc,ll,cc_start,cc_end,cc_start_old,cc_end_old,cc_old
+INTEGER :: reverse_owner, reverse_start_old, reverse_end_old
 LOGICAL :: found
 
 !-----------------------------------------------
@@ -42,12 +43,16 @@ LOGICAL :: found
 
 !$omp parallel do default(none) private(cc)                                   &
 !$omp shared(neighbors, neighbors_old, pft_neighbor, pft_neighbor_old,        &
+!$omp      pfr_neighbor,pfr_neighbor_old,jkr_contact_state,                   &
+!$omp      jkr_contact_state_old,                                             &
 !$omp contact_point_a,contact_point_a_old,contact_point_b,contact_point_b_old,&
 !$omp      contact_lambda_a,contact_lambda_a_old,                             &
 !$omp      contact_lambda_b,contact_lambda_b_old, SuperDEM)
       do cc=1, size(neighbors)
          neighbors_old(cc) = neighbors(cc)
          pft_neighbor_old(:,cc) = pft_neighbor(:,cc)
+         pfr_neighbor_old(:,cc) = pfr_neighbor(:,cc)
+         jkr_contact_state_old(cc) = jkr_contact_state(cc)
          if (SuperDEM) then
             contact_point_a_old(:,cc)=contact_point_a(:,cc)
             contact_point_b_old(:,cc)=contact_point_b(:,cc)
@@ -66,9 +71,12 @@ LOGICAL :: found
       ENDIF
 
 !$omp parallel do default(none)                                         &
-!$omp private(cc,ll,found,cc_start,cc_end,cc_start_old,cc_end_old)      &
+!$omp private(cc,cc_old,ll,found,cc_start,cc_end,cc_start_old,cc_end_old,&
+!$omp    reverse_owner,reverse_start_old,reverse_end_old)                &
 !$omp shared(max_pip,neighbors,neighbor_index,neighbor_index_old,       &
-!$omp    neighbors_old, pft_neighbor,pft_neighbor_old,                  &
+!$omp    neighbors_old,pft_neighbor,pft_neighbor_old,                   &
+!$omp    pfr_neighbor,pfr_neighbor_old,jkr_contact_state,               &
+!$omp    jkr_contact_state_old,use_jkr,                                 &
 !$omp    contact_point_a,contact_point_a_old,                           &
 !$omp    contact_point_b,contact_point_b_old,                           &
 !$omp    contact_lambda_a,contact_lambda_a_old,                         &
@@ -89,6 +97,8 @@ LOGICAL :: found
             DO CC_OLD = CC_START_OLD, CC_END_OLD-1
                if (neighbors(cc) .eq. neighbors_old(cc_old)) then
                   pft_neighbor(:,cc) = pft_neighbor_old(:,cc_old)
+                  pfr_neighbor(:,cc) = pfr_neighbor_old(:,cc_old)
+                  jkr_contact_state(cc) = jkr_contact_state_old(cc_old)
 !SuperDEM
                      if (SuperDEM) then
                          contact_point_a(:,cc)=contact_point_a_old(:,cc_old)
@@ -101,7 +111,33 @@ LOGICAL :: found
                endif
             enddo
 
-            if (.not.found) pft_neighbor(:,cc) = 0.0
+! JKR pair ownership may reverse after sorting or owner migration.
+! PFT/PFR are directed vectors; the neck state is an undirected scalar.
+            IF(.NOT.found .AND. USE_JKR) THEN
+               reverse_owner = neighbors(cc)
+               IF(reverse_owner >= 1 .AND. reverse_owner <= max_pip) THEN
+                  reverse_start_old = 1
+                  IF(reverse_owner > 1) &
+                     reverse_start_old = neighbor_index_old(reverse_owner-1)
+                  reverse_end_old = neighbor_index_old(reverse_owner)
+                  DO cc_old = reverse_start_old, reverse_end_old-1
+                     IF(neighbors_old(cc_old) == ll) THEN
+                        pft_neighbor(:,cc) = -pft_neighbor_old(:,cc_old)
+                        pfr_neighbor(:,cc) = -pfr_neighbor_old(:,cc_old)
+                        jkr_contact_state(cc) = &
+                           jkr_contact_state_old(cc_old)
+                        found = .TRUE.
+                        EXIT
+                     ENDIF
+                  ENDDO
+               ENDIF
+            ENDIF
+
+            if (.not.found) then
+               pft_neighbor(:,cc) = 0.0
+               pfr_neighbor(:,cc) = 0.0
+               jkr_contact_state(cc) = .FALSE.
+            endif
 !SuperDEM
             if (.not.found) then
                if (SuperDEM) then

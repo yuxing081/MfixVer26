@@ -486,10 +486,15 @@ END SUBROUTINE SWAP_PARTICLE_DATA
                      neighbors,pft_neighbor, max_pip,nblen,&
                      contact_point_a,contact_point_b,contact_lambda_a,contact_lambda_b)
              else
-
-                 call EXCHANGE_NEIGHBOR_DATA(swapping_map,inv_swapping_map,&
-                     nbrcount,neighbor_index,neighbors,&
-                     pft_neighbor,max_pip,nblen)
+                 if(USE_JKR) then
+                     call EXCHANGE_NEIGHBOR_DATA_JKR(swapping_map,inv_swapping_map,&
+                         nbrcount,neighbor_index,neighbors,pft_neighbor,&
+                         pfr_neighbor,jkr_contact_state,max_pip,nblen)
+                 else
+                     call EXCHANGE_NEIGHBOR_DATA(swapping_map,inv_swapping_map,&
+                         nbrcount,neighbor_index,neighbors,&
+                         pft_neighbor,max_pip,nblen)
+                 endif
              endif ! superquadric
          endif
 
@@ -501,9 +506,16 @@ END SUBROUTINE SWAP_PARTICLE_DATA
                          max_pip,nblen_old,contact_point_a_old,contact_point_b_old,&
                          contact_lambda_a_old, contact_lambda_b_old)
                  else
-                     call EXCHANGE_NEIGHBOR_DATA(swapping_map,inv_swapping_map,&
-                         nbrcount_old,neighbor_index_old,&
-                         neighbors_old,pft_neighbor_old,max_pip,nblen_old)
+                     if(USE_JKR) then
+                         call EXCHANGE_NEIGHBOR_DATA_JKR(swapping_map,inv_swapping_map,&
+                             nbrcount_old,neighbor_index_old,neighbors_old,&
+                             pft_neighbor_old,pfr_neighbor_old,&
+                             jkr_contact_state_old,max_pip,nblen_old)
+                     else
+                         call EXCHANGE_NEIGHBOR_DATA(swapping_map,inv_swapping_map,&
+                             nbrcount_old,neighbor_index_old,&
+                             neighbors_old,pft_neighbor_old,max_pip,nblen_old)
+                     endif
                  endif !superquadric
              endif
 
@@ -605,6 +617,67 @@ SUBROUTINE EXCHANGE_NEIGHBOR_DATA(swapping_map,inv_swapping_map,nbrcount,neighbo
       deallocate(pft_nbr)
 
 END SUBROUTINE EXCHANGE_NEIGHBOR_DATA
+
+
+! JKR-specific spherical neighbor sort. The official routine is retained
+! unchanged for USE_JKR=.FALSE.; this path preserves double-precision PFT,
+! PFR, and the scalar neck state together.
+SUBROUTINE EXCHANGE_NEIGHBOR_DATA_JKR(swapping_map,inv_swapping_map, &
+      nbrcount,neighbor_index,neighbor,pft_neighbor,pfr_neighbor, &
+      jkr_state,npart,nblen)
+
+      implicit none
+
+      integer, intent(in) :: npart,nblen
+      integer, intent(in) :: swapping_map(npart),inv_swapping_map(npart)
+      integer, intent(in) :: nbrcount(npart)
+      integer, intent(inout) :: neighbor_index(npart),neighbor(nblen)
+      double precision, intent(inout) :: pft_neighbor(3,nblen)
+      double precision, intent(inout) :: pfr_neighbor(3,nblen)
+      logical, intent(inout) :: jkr_state(nblen)
+
+      integer, allocatable :: nbr(:)
+      double precision, allocatable :: pft_nbr(:,:),pfr_nbr(:,:)
+      logical, allocatable :: state_nbr(:)
+      integer :: j,newid,oldid,oldnbid,cc_start,offset,sum_count
+
+      allocate(nbr(nblen),pft_nbr(3,nblen),pfr_nbr(3,nblen))
+      allocate(state_nbr(nblen))
+
+      offset=0
+      do newid=1,npart
+         oldid=swapping_map(newid)
+         if(oldid /= 1) then
+            cc_start=neighbor_index(oldid-1)
+         else
+            cc_start=1
+         endif
+
+         do j=1,nbrcount(oldid)
+            oldnbid=neighbor(j+cc_start-1)
+            nbr(offset+j)=inv_swapping_map(oldnbid)
+            pft_nbr(:,offset+j)=pft_neighbor(:,cc_start+j-1)
+            pfr_nbr(:,offset+j)=pfr_neighbor(:,cc_start+j-1)
+            state_nbr(offset+j)=jkr_state(cc_start+j-1)
+         enddo
+         offset=offset+nbrcount(oldid)
+      enddo
+
+      neighbor=nbr
+      pft_neighbor=pft_nbr
+      pfr_neighbor=pfr_nbr
+      jkr_state=state_nbr
+
+      sum_count=0
+      do newid=1,npart
+         oldid=swapping_map(newid)
+         sum_count=sum_count+nbrcount(oldid)
+         neighbor_index(newid)=sum_count+1
+      enddo
+
+      deallocate(nbr,pft_nbr,pfr_nbr,state_nbr)
+
+END SUBROUTINE EXCHANGE_NEIGHBOR_DATA_JKR
 
 
 !vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
@@ -794,9 +867,15 @@ SUBROUTINE DES_SORT_PARTICLES_SPATIALLY()
                 pft_neighbor,max_pip,nblen,contact_point_a,contact_point_b,&
                 contact_lambda_a,contact_lambda_b)
         else
-            call EXCHANGE_NEIGHBOR_DATA(swapping_map,inv_swapping_map,&
-                nbrcount,neighbor_index,neighbors,&
-                pft_neighbor,max_pip,nblen)
+            if(USE_JKR) then
+                call EXCHANGE_NEIGHBOR_DATA_JKR(swapping_map,inv_swapping_map,&
+                    nbrcount,neighbor_index,neighbors,pft_neighbor,&
+                    pfr_neighbor,jkr_contact_state,max_pip,nblen)
+            else
+                call EXCHANGE_NEIGHBOR_DATA(swapping_map,inv_swapping_map,&
+                    nbrcount,neighbor_index,neighbors,&
+                    pft_neighbor,max_pip,nblen)
+            endif
         endif !superquadric
 
     endif
@@ -809,8 +888,16 @@ SUBROUTINE DES_SORT_PARTICLES_SPATIALLY()
                 max_pip,nblen_old,contact_point_a_old,contact_point_b_old,&
                 contact_lambda_a_old,contact_lambda_b_old)
         else
-            call EXCHANGE_NEIGHBOR_DATA(swapping_map,inv_swapping_map,nbrcount_old,neighbor_index_old,&
-                neighbors_old,pft_neighbor_old,max_pip,nblen_old)
+            if(USE_JKR) then
+                call EXCHANGE_NEIGHBOR_DATA_JKR(swapping_map,inv_swapping_map,&
+                    nbrcount_old,neighbor_index_old,neighbors_old,&
+                    pft_neighbor_old,pfr_neighbor_old,jkr_contact_state_old,&
+                    max_pip,nblen_old)
+            else
+                call EXCHANGE_NEIGHBOR_DATA(swapping_map,inv_swapping_map,&
+                    nbrcount_old,neighbor_index_old,neighbors_old,&
+                    pft_neighbor_old,max_pip,nblen_old)
+            endif
         endif ! superquadric
     endif
 

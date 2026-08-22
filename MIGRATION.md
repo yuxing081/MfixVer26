@@ -215,3 +215,20 @@ Restart 待办：26.1.2 read_res0_des.f 在 restart 中的 DES_USR_VAR 数量大
 | 2026-08-22 | `wall_oblique_stick` | 通过 smoke | 完成 0.6 us，末态切向速度约 0.7793 m/s、自旋约 -7.835e5 rad/s；切向/滚动路径激活 |
 
 墙面 restart、DMP owner migration 和双精度 wall facet/PFT/PFR/state 快照尚未完成，因此本模块只提交串行生产物理与内存生命周期。
+
+## 第三阶段模块 5：邻居重建与粒子排序历史
+
+日期：2026-08-22。
+
+- 在官方 26.1.2 neighbor rebuild 的 PFT 快照/恢复上同步追加 PFR 和 JKR contact state；同向 pair 原值恢复，新 pair 清零/false。
+- JKR 模式增加反向 owner fallback：PFT/PFR 取反，标量 contact state 不取反；该 fallback 在 `USE_JKR=.FALSE.` 时不启用。
+- 普通球形 JKR 粒子排序使用独立的双精度历史例程，同时搬运 PFT、PFR 和 state；官方排序例程与 SuperDEM 路径保持不变，以维持关闭 JKR 时的原生行为。
+- 当前反向 fallback 仍依赖重排后的 local particle index；DMP owner migration 必须在 packet 层使用 global ID pair 规则补全。
+
+| 日期 | 工况 | 结果 | 证据/边界 |
+| --- | --- | --- | --- |
+| 2026-08-22 | 模块 5 串行编译 | 通过 | MFIX 26.1.2、GNU Fortran 15.3.0 |
+| 2026-08-22 | JKR `pair_oblique_stick` 改动前后 | 逐字节一致 | `particle_output.csv` SHA-256 均为 `b5681e59fe49c562a1bcd82cc1baa51e4045d8252f0c3c9d32aa991ae6fdbce8` |
+| 2026-08-22 | 官方墙 Hertz vs 模块 5 后 solver | 逐字节一致 | SHA-256 仍为 `b560bb90ef4221b2c0799a64a59b0e0a4f83a33c295507c774d8391158284bc9` |
+
+尚需 validation-only 双精度快照直接证明邻居重建前后 PFT/PFR/state 连续；本模块不宣称 DMP 或 restart 已通过。
