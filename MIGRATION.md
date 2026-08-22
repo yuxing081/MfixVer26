@@ -178,3 +178,22 @@ model/read_namelist.f 暂不复制；read_res1_des_mod.f 和 write_res1_des_mod.
 | 2026-08-22 | 同相异质表面能 0.01/0.04 | 通过 | 双精度 particle_output.csv 保持两值；几何平均等效 gamma 为 0.02 |
 
 Restart 待办：26.1.2 read_res0_des.f 在 restart 中的 DES_USR_VAR 数量大于当前 DES_USR_VAR_SIZE 时会跳过读取而不安全地推进记录。新 reader 必须做显式容量错误检查；含逐颗粒 gamma 的 JKR restart 要求 DES_USR_VAR_SIZE>=1。
+
+## 第三阶段模块 3：球形颗粒–颗粒 JKR、PFT 与 Chen 滚动
+
+日期：2026-08-22。
+
+- 在 MFIX 26.1.2 的普通球形 DEM 接触循环内语义重写 JKR 法向力；正重叠建立颈部，负重叠仅延续已有颈部，达到 `JKR_ALPHA_SAFETY*delta_c` 后清除 PFT、PFR 和 contact state。
+- 接触半径由稳定分支 Newton 迭代求解；JKR 法向刚度、切向刚度和阻尼分别按 `a`、`a` 和 `sqrt(a)` 缩放。逐颗粒表面能在接触时计算异质 `gamma_eff`。
+- PFT 继续沿用 26.1.2 的接触槽与切平面投影；JKR 滑移上限使用含拉脱力的弹性法向载荷。Chen PFR 按 global-ID canonical frame 累积、限幅并产生等大反向滚动力矩。
+- `USE_JKR=.FALSE.`、零表面能以及 GSP/SuperDEM 路径均不进入 JKR 分支；邻居重建、DMP 和 restart 中的 PFR/state 搬运仍由后续模块完成。
+
+| 日期 | 工况 | 结果 | 证据/边界 |
+| --- | --- | --- | --- |
+| 2026-08-22 | 模块 3 串行编译 | 通过 | MFIX 26.1.2、GNU Fortran 15.3.0；`git diff --check` 通过 |
+| 2026-08-22 | `USE_JKR=.FALSE.` 两球 Hertz 对照 | 通过 | 修改前后 `particle_output.csv` SHA-256 均为 `7cdc2bf6a09e68480dd2ebd52183b0ca50ae02c4326738ebb57155f5a9d4f8b6` |
+| 2026-08-22 | `pair_normal_stick` | 通过 smoke | 139758 个 DEM 子步完成，无 JKR Newton 警告；末态保持对称运动。尚需双精度接触状态诊断确认负重叠颈部全过程 |
+| 2026-08-22 | `pair_normal_rebound` | 通过 smoke | 两粒子末态速度为 `-0.11228027/+0.11228027 m/s`，形成拉脱分支 |
+| 2026-08-22 | `pair_oblique_stick` | 通过 smoke | 末态存在切向速度与约 `2.5367e5 rad/s` 对称自旋，证明切向/滚动路径被激活；PFT/PFR 数值仍需 validation-only 双精度快照 |
+
+本模块的 smoke test 只证明执行路径和宏观响应；它不替代后续力–重叠、接触半径、PFT/PFR、contact state 和解析拉脱力的定量回归。

@@ -110,6 +110,14 @@ CONTAINS
 ! Rolling friction
       DOUBLE PRECISION :: RFTOW(3), omega_mag
 
+! Spherical JKR contact and Chen rolling-resistance temporaries
+      DOUBLE PRECISION :: A_OVER_A0, A_JKR, JKR_NORM(DIMN)
+      DOUBLE PRECISION :: JKR_A0_LOCAL, JKR_DELTAC_LOCAL
+      DOUBLE PRECISION :: JKR_FC_LOCAL, JKR_GAMMA_LOCAL
+      DOUBLE PRECISION :: JKR_E_EFF_LOCAL
+      DOUBLE PRECISION :: V_ROLL(3), XI_MAG, XI_CRIT, KR_JKR
+      DOUBLE PRECISION :: MR_TORQUE(3)
+
 ! BONDED test parameters here
       INTEGER :: nbid
       DOUBLE PRECISION :: F1(3), F2(3), T1(3), T2(3)
@@ -165,6 +173,9 @@ CONTAINS
 !$omp    etat_des,fn,ft,overlap_t,tangent,mag_overlap_t,               &
 !$omp    eq_radius,distapart,force_coh,dist_mag,NORMAL,ftmd,fnmd,      &
 !$omp    dist_cl, dist_ci, fc_tmp, tow_tmp, tow_force, qq_tmp,         &
+!$omp    a_over_a0,a_jkr,jkr_norm,jkr_a0_local,jkr_deltac_local,      &
+!$omp    jkr_fc_local,jkr_gamma_local,jkr_e_eff_local,v_roll,         &
+!$omp    xi_mag,xi_crit,kr_jkr,mr_torque,                             &
 !$omp    rftow,omega_mag )                                             &
 !$omp shared(max_pip,neighbors,neighbor_index,des_pos_new,des_radius,  &
 !$omp    omega_new, mew_r, numpes,                                     &
@@ -186,6 +197,9 @@ CONTAINS
 !$omp    FCHAIN_ORIENT, FCHAIN_FN,FCHAIN_FT,FCHAIN_FC,                 &
 !$omp    FCHAIN_LENGTH,FCHAIN_FN_MAG,FCHAIN_LOCAL_ID1,FCHAIN_LOCAL_ID2,&
 !$omp    FCHAIN_GLOBAL_ID1,FCHAIN_GLOBAL_ID2, FCHAIN_OVERLAP) &
+!$omp shared(use_jkr,pfr_neighbor,jkr_contact_state,jkr_alpha_safety, &
+!$omp    hert_kn_jkr,hert_kt_jkr,des_etan_jkr,des_etat_jkr,           &
+!$omp    jkr_thetar_crit)                                             &
 !$omp shared(max_pip_exist)
 
 ! Force chain initialization
@@ -326,9 +340,38 @@ CONTAINS
                ENDIF
             ENDIF
 
+! Compute actual-particle JKR parameters before applying the contact cutoff.
+            phaseLL = PIJK(LL,5)
+            phaseI = PIJK(I,5)
+            rad_eff = (rad*DES_RADIUS(I))/(rad+DES_RADIUS(I))
+            JKR_FC_LOCAL = ZERO
+            JKR_A0_LOCAL = ZERO
+            JKR_DELTAC_LOCAL = ZERO
+            IF(USE_JKR) THEN
+               JKR_GAMMA_LOCAL = SQRT(GET_DES_SURFACE_ENERGY(LL)* &
+                  GET_DES_SURFACE_ENERGY(I))
+               JKR_E_EFF_LOCAL = 0.75D0*HERT_KN_JKR(phaseLL,phaseI)
+               JKR_A0_LOCAL = (9.D0*PI*JKR_GAMMA_LOCAL*rad_eff**2/ &
+                  JKR_E_EFF_LOCAL)**(ONE/3.D0)
+               JKR_DELTAC_LOCAL = JKR_A0_LOCAL**2 / &
+                  (2.D0*6.D0**(ONE/3.D0)*rad_eff)
+               JKR_FC_LOCAL = 3.D0*PI*rad_eff*JKR_GAMMA_LOCAL
+            ENDIF
+
+            IF(USE_JKR .AND. JKR_FC_LOCAL > ZERO) THEN
+               IF(DIST_MAG > (R_LM + JKR_ALPHA_SAFETY* &
+                  JKR_DELTAC_LOCAL)**2) THEN
+                  PFT_NEIGHBOR(:,CC) = ZERO
+                  PFR_NEIGHBOR(:,CC) = ZERO
+                  JKR_CONTACT_STATE(CC) = .FALSE.
+                  CYCLE
+               ENDIF
+            ELSE
+
             IF(DIST_MAG > (R_LM - SMALL_NUMBER)**2) THEN
                PFT_NEIGHBOR(:,CC) = 0.0
                CYCLE
+            ENDIF
             ENDIF
 
             IF(DIST_MAG == 0) THEN
@@ -366,12 +409,36 @@ CONTAINS
 ! flexible_gsp is also go into here
                CALL CFRELVEL(LL, I, V_REL_TRANS_NORM, VREL_T, NORMAL(:), DIST_MAG)
             ENDIF
+
+! A tensile JKR neck remains active only if this contact was established
+! previously at nonnegative overlap.
+            IF(USE_JKR .AND. JKR_FC_LOCAL > ZERO) THEN
+               IF(OVERLAP_N >= ZERO) THEN
+                  JKR_CONTACT_STATE(CC) = .TRUE.
+               ELSEIF(.NOT.JKR_CONTACT_STATE(CC)) THEN
+                  PFT_NEIGHBOR(:,CC) = ZERO
+                  PFR_NEIGHBOR(:,CC) = ZERO
+                  JKR_CONTACT_STATE(CC) = .FALSE.
+                  CYCLE
+               ENDIF
+               A_OVER_A0 = NEWTON_RAPHSON_METHOD(OVERLAP_N / &
+                  (6.D0**(ONE/3.D0)*JKR_DELTAC_LOCAL))
+            ENDIF
             phaseLL = PIJK(LL,5)
             phaseI = PIJK(I,5)
 !{SBAN
             rad_eff = (rad * DES_RADIUS(I)) / (rad + DES_RADIUS(I))
             m_eff = (PMASS(LL) * PMASS(I)) / (PMASS(LL) + PMASS(I))
 ! Hertz spring-dashpot contact model
+            IF(USE_JKR .AND. JKR_FC_LOCAL > ZERO) THEN
+               A_JKR = A_OVER_A0*JKR_A0_LOCAL
+               KN_DES = HERT_KN_JKR(phaseLL,phaseI)*A_JKR
+               KT_DES = HERT_KT_JKR(phaseLL,phaseI)*A_JKR
+               ETAN_DES = DES_ETAN_JKR(phaseLL,phaseI)*SQRT(A_JKR)
+               ETAT_DES = DES_ETAT_JKR(phaseLL,phaseI)*SQRT(A_JKR)
+               JKR_NORM(:) = -4.D0*JKR_FC_LOCAL* &
+                  (A_OVER_A0**3-A_OVER_A0**1.5D0)*NORMAL(:)
+            ELSE
             IF (DES_COLL_MODEL_ENUM .EQ. HERTZIAN) THEN
                sqrt_overlap = SQRT(OVERLAP_N)
                KN_DES = hert_kn(phaseLL,phaseI)*sqrt_overlap * sqrt(rad_eff)
@@ -387,10 +454,17 @@ CONTAINS
                ETAT_DES = DES_ETAT(phaseLL,phaseI) * sqrt(m_eff)
 !}
             ENDIF
+            ENDIF
 
 ! Calculate the normal contact force
+            IF(USE_JKR .AND. JKR_FC_LOCAL > ZERO) THEN
+               FN(:) = JKR_NORM(:) - ETAN_DES*V_REL_TRANS_NORM*NORMAL(:)
+            ELSE
+               JKR_CONTACT_STATE(CC) = .FALSE.
+               PFR_NEIGHBOR(:,CC) = ZERO
             FN(:) =  -(KN_DES * OVERLAP_N * NORMAL(:) + &
                ETAN_DES * V_REL_TRANS_NORM * NORMAL(:))
+            ENDIF
 
 ! Calculate the tangential overlap
             OVERLAP_T(:) = DTSOLID*VREL_T(:) + PFT_NEIGHBOR(:,CC)
@@ -402,13 +476,23 @@ CONTAINS
                FT = -KT_DES*OVERLAP_T - ETAT_DES*VREL_T
                FTMD = sqrt(dot_product(FT,FT))
 ! Max force before the on set of frictional slip.
+               IF(USE_JKR .AND. JKR_FC_LOCAL > ZERO) THEN
+                  FNMD = MEW*ABS(-DOT_PRODUCT(JKR_NORM,NORMAL) + &
+                     2.D0*JKR_FC_LOCAL)
+               ELSE
                FNMD = MEW*sqrt(dot_product(FN,FN))
+               ENDIF
 ! Frictional slip
                IF(FTMD > FNMD) THEN
 ! Direction of tangential force.
+                  IF(USE_JKR .AND. JKR_FC_LOCAL > ZERO) THEN
+                     FT = (FNMD/FTMD)*FT
+                     OVERLAP_T = -(FT + ETAT_DES*VREL_T)/KT_DES
+                  ELSE
                   TANGENT = OVERLAP_T/MAG_OVERLAP_T
                   FT = -FNMD * TANGENT
                   OVERLAP_T = (FNMD/KT_DES) * TANGENT
+                  ENDIF
                ENDIF
             ELSE
                FT = 0.0
@@ -558,6 +642,34 @@ CONTAINS
 ! particle diameter. Therefore here mew_r is multiplied by the diameter.
 
 ! TBD: implementation of rolling friction for glued particles @renjieke 1-1-2024
+            IF(USE_JKR .AND. JKR_FC_LOCAL > ZERO) THEN
+! Chen rolling displacement is stored in a canonical global-ID frame.
+               V_ROLL(:) = -rad_eff*CROSS( &
+                  OMEGA_NEW(LL,:)-OMEGA_NEW(I,:),NORMAL(:)) - &
+                  0.5D0*(DES_RADIUS(I)-DES_RADIUS(LL))/ &
+                  (DES_RADIUS(LL)+DES_RADIUS(I))*VREL_T(:)
+               PFR_NEIGHBOR(:,CC) = PFR_NEIGHBOR(:,CC) + DTSOLID* &
+                  MERGE(ONE,-ONE,IGLOBAL_ID(LL)<IGLOBAL_ID(I))*V_ROLL(:)
+               XI_MAG = SQRT(DOT_PRODUCT(PFR_NEIGHBOR(:,CC), &
+                  PFR_NEIGHBOR(:,CC)))
+               XI_CRIT = JKR_THETAR_CRIT*rad_eff
+               IF(XI_MAG > XI_CRIT .AND. XI_MAG > ZERO) &
+                  PFR_NEIGHBOR(:,CC) = XI_CRIT*PFR_NEIGHBOR(:,CC)/XI_MAG
+               KR_JKR = 4.D0*JKR_FC_LOCAL*A_OVER_A0**1.5D0
+               MR_TORQUE(:) = -KR_JKR*PFR_NEIGHBOR(:,CC)
+!$omp atomic
+               TOW(LL,1) = TOW(LL,1) + MR_TORQUE(1)
+!$omp atomic
+               TOW(LL,2) = TOW(LL,2) + MR_TORQUE(2)
+!$omp atomic
+               TOW(LL,3) = TOW(LL,3) + MR_TORQUE(3)
+!$omp atomic
+               TOW(I,1) = TOW(I,1) - MR_TORQUE(1)
+!$omp atomic
+               TOW(I,2) = TOW(I,2) - MR_TORQUE(2)
+!$omp atomic
+               TOW(I,3) = TOW(I,3) - MR_TORQUE(3)
+            ELSE
             IF (.not. GluedSphereDEM) THEN
             if(MEW_R>ZERO) then
                ! Particle LL
@@ -573,6 +685,7 @@ CONTAINS
                   TOW(I,:) = TOW(I,:) + RFTOW
                endif
             endif
+            ENDIF
             ENDIF
          ENDDO cc_loop ! Neighbor CC i.e. particle I loop
          DES_COLL_FORCE(LL,:) = FC(LL,:)
@@ -651,6 +764,42 @@ CONTAINS
       END SUBROUTINE GSP_MIN_IMAGE_VECTOR
 
         include 'functions.inc'
+
+! Return the stable JKR contact-radius branch for a normalized overlap.
+      DOUBLE PRECISION FUNCTION NEWTON_RAPHSON_METHOD(Y)
+         IMPLICIT NONE
+         DOUBLE PRECISION, INTENT(IN) :: Y
+         DOUBLE PRECISION :: X_OLD, X_NEW, FX, DFX
+         INTEGER :: ITER
+
+         X_OLD = ONE
+         X_NEW = X_OLD
+         DO ITER=1,1000
+            FX = 2.D0*X_NEW**2 - (4.D0/3.D0)*SQRT(X_NEW) - Y
+            DFX = 4.D0*X_NEW - (2.D0/3.D0)/SQRT(X_NEW)
+            IF(ABS(DFX) < 1.D-15) THEN
+!$omp critical (jkr_nr_warn_pp)
+               WRITE(*,'(A,ES12.5,A,ES12.5,A,I0)') &
+                  'WARNING: JKR pair Newton derivative small; y=',Y, &
+                  ' x=',X_NEW,' iter=',ITER
+!$omp end critical (jkr_nr_warn_pp)
+               NEWTON_RAPHSON_METHOD = X_NEW
+               RETURN
+            ENDIF
+            X_NEW = MAX(X_OLD-FX/DFX,1.D-12)
+            IF(ABS((X_NEW-X_OLD)/X_NEW) < 1.D-8) THEN
+               NEWTON_RAPHSON_METHOD = X_NEW
+               RETURN
+            ENDIF
+            X_OLD = X_NEW
+         ENDDO
+!$omp critical (jkr_nr_warn_pp)
+         WRITE(*,'(A,ES12.5,A,ES12.5)') &
+            'WARNING: JKR pair Newton did not converge; y=',Y,' x=',X_NEW
+!$omp end critical (jkr_nr_warn_pp)
+         NEWTON_RAPHSON_METHOD = X_NEW
+      END FUNCTION NEWTON_RAPHSON_METHOD
+
 
 !vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv!
 !                                                                      !
