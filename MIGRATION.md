@@ -280,13 +280,41 @@ Restart 待办：26.1.2 read_res0_des.f 在 restart 中的 DES_USR_VAR 数量大
 
 - MFIX 26.1.2 官方 `desgrid_mod.f` 的 half-cell coarse 判据仍使用 `2*MAX_RADIUS*FACTOR_RLM`。旧 JKR 修改的意图是比较半个网格宽度与最大搜索半径，因此在 26.1.2 邻居框架上语义重写为系数 4；没有复制旧文件或改变新版其余 DES grid/DMP 过滤逻辑。
 - 粗网格新接触工况在串行与固定两进程 DMP 下均形成一个激活的 JKR contact state，最终 4 个颗粒的 X/Y/Z/U/V/W 双精度 CSV 逐项差值为 0；该工况为法向接触，PFT/PFR 预期为零。
-- DMP RESTART_1 首次邻居重建后的 validation-only 快照直接观察到拥有接触对的 rank：`NEIGH_NUM=1`、PFT=`8.2190147440577080e-10 m`、PFR=0、state count=1。临时输出已从生产源码撤除；非零 PFR 的逐字段 restart 证据目前只在串行异径工况通过。
+- DMP RESTART_1 首次邻居重建后的 validation-only 快照直接观察到拥有接触对的 rank。等径 2-rank 写/读工况恢复 PFT=`8.2190147440577080e-10 m` 与 state=TRUE；异径串行写档、2-rank 读取工况恢复 PFT=`8.1786908176533694e-10 m`、非零 PFR=`7.8876185564904887e-12 m` 与 state=TRUE。临时输出均已从生产源码撤除。
 - 固定两进程 `USE_JKR=.FALSE.` 官方 1.2 restart 基线本身也不是 continuous 逐字节一致：末态最大差 X=`7.9490e-11 m`、Y=`1.3461e-13 m`、U=`2.5411e-4 m/s`、V=`2.7856e-6 m/s`，日志无错误。因此模块 7 中 JKR DMP restart 的非零末态差异不能全部归因于新增历史，但仍未达到本项目 DMP restart 验收标准。
 
 | 日期 | 工况 | 结果 | 证据/边界 |
 | --- | --- | --- | --- |
 | 2026-08-22 | `pair_new_contact_coarse_dmp`，1 rank vs 2 ranks | 通过 | 均退出 0；4 粒子末态 X/Y/Z/U/V/W 最大差均为 0；形成 1 个 JKR 接触 |
-| 2026-08-22 | 2-rank JKR RESTART_1 首邻居重建 | 部分通过 | 非零 PFT 与 state 恢复；本工况 PFR 为零，尚缺 DMP 非零 PFR 直接证据 |
+| 2026-08-22 | JKR RESTART_1 首邻居重建，2-rank reader | 逐字段恢复通过 | 非零 PFT、非零 PFR 与 state 均按 global-ID pending queue 恢复；末态 continuous 一致性仍受官方 DMP restart 基线差异阻塞 |
 | 2026-08-22 | 2-rank Hertz 官方 1.2 continuous vs RESTART_1 | 基线非零差异 | 无运行错误；用于隔离 MFIX 26.1.2 官方 DMP restart 重排误差，不作为 JKR 通过结论 |
 
 跨 rank 单侧 pair 过滤策略尚未被独立证明在所有 owner 迁移方向都正确；后续仍需用非零 PFT/PFR 的跨分区接触逐断点检查，不能由本模块的法向 coarse case 替代。
+
+## 第四阶段：固化回归与团聚体集成 smoke
+
+日期：2026-08-22。
+
+- 新增 `validation/cases/restart_pair_pfr/`：异径两球、非零 PFT/PFR 和 JKR neck state 的 continuous、5 ns + RESTART_1、5 ns + RESTART_2 runner。case 仅保留生产 `DES_USR_VAR(1)` 表面能槽，2:31 能量/调试槽未混入生产源码。
+- 新增 `validation/cases/restart_wall_oblique/`：斜碰墙面的 continuous、0.2 us + RESTART_1 runner，覆盖 wall facet/PFT/PFR/state 的集成恢复。
+- 两个 runner 只清理各自在 `validation/results/` 下的固定目录，接受相对或绝对 solver 路径；大型输出继续由 `.gitignore` 排除。
+- 复用旧 `initialAgg.mfx` 与 1000 粒子输入，在 MFIX 26.1.2 串行 solver 下推进一个有效宏步至 10 us。旧输入 `Diameter: F` 的零默认值仅在 `/tmp` 副本修正为原材料直径 2 um，未修改旧存档。
+
+| 日期 | 固化/集成工况 | 结果 | 证据/边界 |
+| --- | --- | --- | --- |
+| 2026-08-22 | `restart_pair_pfr` runner | 通过 | continuous 与 RESTART_1 SHA-256 均为 `b80cf63a7b052c198fc5c632ab75bc2b50df5c5e7033aabefaabe5bdf454806d`；RESTART_2 为 `3142dea040e6d3cc704836250f27d95fc3a60d474790c3f51250bc8e3946e980` |
+| 2026-08-22 | `restart_wall_oblique` runner | 通过 | continuous 与 RESTART_1 SHA-256 均为 `b3ad295807141728ce7580fda695aba6e261d1706edaa57a63ab29b51ba0f402` |
+| 2026-08-22 | 1000 粒子 initialAgg，一个宏步 | 通过 smoke | 达到 10 us，1000/1000 保留；Rg=`9.6850117176279204e-6 m`，平均速率=`1.4091528096525046e-2 m/s`；日志无 error/warning/abort/NaN/overflow |
+
+团聚体结果只证明输入兼容、数组/接触路径可运行及短时宏观量有限；尚未计算平均配位数、重叠率、去除向心力后的长期稳定性或 restart 宏观连续性，不能替代两颗粒历史回归。
+
+## 当前验收分类
+
+| 分类 | 当前决定 |
+| --- | --- |
+| 已迁移 | 球形颗粒–颗粒/墙面 Chen/JKR，负重叠颈部，PFT/PFR/滚动力矩，逐颗粒表面能，邻居重建，DMP owner packet，DES RES 2.0 RESTART_1 pair/wall history |
+| 采用新版官方实现 | MFIX 26.1.2 `READ_PAR_COL`/global-ID collision map、RESTART_2 early return、粒子所有权与 ghost 框架、SuperDEM/GSP 原生代码路径；在其上仅追加 JKR 历史 |
+| 暂缓 | DMP continuous 与 RESTART_1 末态严格一致、不同 MPI 分解、所有方向的跨 rank 反向 owner 断点、DMP 墙面超过 8 facet slots、完整能量审计、团聚体长期/配位/重叠/restart 指标 |
+| 废弃 | 旧 23.4.1 JKR RES 1.3 直接兼容、旧式 `NEIGHBOR_INDEX` restart、旧 `read_res1` 缺陷修补、`cfnewvalues.f` 能量审计调用、生产代码中的 DES_USR_VAR(2:31) seed/诊断、旧 `read_namelist.f` 空白差异 |
+
+`USE_JKR=.FALSE.` 的串行 Hertz/墙面基准保持 MFIX 26.1.2 原生逐字节一致；DMP restart 的官方 1.2 基线非零差异已单列，不能据此把本项目 DMP restart 标记为完全验收。

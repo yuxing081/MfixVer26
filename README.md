@@ -29,36 +29,47 @@
 
 ## 编译环境
 
-先进入 WSL 并激活准确环境：
+所有命令均在 WSL Ubuntu-22.04 中执行。先激活准确环境：
 
     conda activate /home/yuxing/miniforge3/envs/mfix-26.1.2
 
-已核验 GNU Fortran 15.3.0、CMake 4.2.3 和 build_mfixsolver。DMP 构建前还必须在完整激活环境中验证 mpifort。
+已核验 MFIX 26.1.2、GNU Fortran 15.3.0、CMake 4.2.3 和 MPI 3.1。串行与 DMP solver 的正式产物分别位于 `code/build/mfixsolver` 和 `code/build_dmp/mfixsolver_dmp`；不要使用 `code/` 顶层可能残留的旧 solver 副本。
 
-编译官方 26.1.2 串行基准：
-
-    cd /home/yuxing/mfix/MfixVer26
-    mkdir -p build/native-serial
-    cd build/native-serial
-    build_mfixsolver --batch -j 8
-
-编译 code/ 中同名源码覆盖后的串行 solver：
+从干净构建目录配置并编译串行 solver：
 
     cd /home/yuxing/mfix/MfixVer26/code
-    build_mfixsolver --batch -j 8
+    cmake -S "$CONDA_PREFIX/share/mfix/src" -B build -DCMAKE_BUILD_TYPE=Release
+    cmake --build build -j 8
 
-编译 DMP solver：
+配置并编译 DMP solver：
 
     cd /home/yuxing/mfix/MfixVer26/code
-    build_mfixsolver --batch --dmp -j 8
-
-2026-08-22 已验证 code/ 串行基线构建成功，16 个本地覆盖文件均被识别；生成 solver 的 SHA-256 为 e8da3c67cf2bb1b7e99299c65b70ccdfe78a9cbf9373a792a152947d498ef3d6。此结果只证明源码布局和工具链可用。
+    cmake -S "$CONDA_PREFIX/share/mfix/src" -B build_dmp -DCMAKE_BUILD_TYPE=Release -DENABLE_MPI=ON
+    cmake --build build_dmp -j 8
 
 build/、solver、模块文件和运行输出均被 Git 忽略。不要在 conda 官方源码目录内构建或编辑。
 
 ## 最小运行与测试
 
-第二阶段只建立可追踪的 26.1.2 源码基线，尚未提供已通过的 JKR case。第三阶段从 USE_JKR=.FALSE. 原生对照和串行两颗粒 smoke case 开始；在相应 case 和测试脚本实际加入后，本节记录精确命令。当前不得把“能够编译”报告为物理或 restart 通过。
+运行固化的异径两球 PFT/PFR/JKR state restart 回归：
+
+    cd /home/yuxing/mfix/MfixVer26
+    validation/cases/restart_pair_pfr/run_restart_pair_pfr.sh code/build/mfixsolve
+
+脚本在 `validation/results/restart_pair_pfr/` 生成三条分支并比较双精度 `particle_output.csv`：
+
+墙面 PFT/PFR/state 回归使用：
+
+
+- continuous；
+- 5 ns + RESTART_1；
+- 5 ns + RESTART_2 敏感性对照。
+
+两进程运行的基本命令为：
+
+    mpirun -np 2 /home/yuxing/mfix/MfixVer26/code/build_dmp/mfixsolver_dmp -f mfix.dat
+
+截至 2026-08-22，串行 pair/wall JKR、异质表面能、PFT/PFR/state RESTART_1、DMP owner migration 和 coarse-grid 新接触已通过。DMP 首次邻居重建已直接恢复非零 PFT/PFR/state；但 continuous 与 DMP RESTART_1 的末态仍非逐字节一致，且 `USE_JKR=.FALSE.` 的 MFIX 26.1.2 官方 1.2 DMP restart 也存在基线差异。该项在 MIGRATION.md 中保持“暂缓/未验收”，不能由编译或运行完成替代。
 
 验证顺序固定为：
 
