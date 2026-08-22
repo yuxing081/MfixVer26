@@ -75,6 +75,7 @@ class CaseConfig:
     monitor_user_variables: tuple[int, ...]
     expected_initial_overlap: float
     contact_time_speed: float
+    write_vtk_files: bool = False
 
 
 def default_material_config() -> MaterialConfig:
@@ -205,6 +206,95 @@ def restart_case_config(
     if len(matches) != 1:
         raise ValueError(f"Unknown restart case: {case_name}")
     return matches[0]
+
+def hertz_case_configs(
+    material: MaterialConfig,
+) -> tuple[CaseConfig, ...]:
+    diameter = 2.0 * material.particle_radius
+    pair_particles = (
+        ParticleConfig(
+            position=(10.0e-6, 8.9e-6, 10.0e-6),
+            velocity=(0.0, 0.5, 0.0),
+            diameter=diameter,
+            density=material.particle_density,
+            surface_energy=material.surface_energy,
+        ),
+        ParticleConfig(
+            position=(10.0e-6, 11.1e-6, 10.0e-6),
+            velocity=(0.0, -0.5, 0.0),
+            diameter=diameter,
+            density=material.particle_density,
+            surface_energy=material.surface_energy,
+        ),
+    )
+    wall_normal_particle = (
+        ParticleConfig(
+            position=(10.0e-6, 1.2e-6, 10.0e-6),
+            velocity=(0.0, -1.0, 0.0),
+            diameter=diameter,
+            density=material.particle_density,
+            surface_energy=material.surface_energy,
+        ),
+    )
+    wall_oblique_particle = (
+        ParticleConfig(
+            position=(10.0e-6, 1.2e-6, 10.0e-6),
+            velocity=(0.5, -1.0, 0.0),
+            diameter=diameter,
+            density=material.particle_density,
+            surface_energy=material.surface_energy,
+        ),
+    )
+
+    def make_case(
+        name: str,
+        description: str,
+        particles: tuple[ParticleConfig, ...],
+        wall_contact: bool,
+        initial_gap_or_overlap: float,
+    ) -> CaseConfig:
+        return CaseConfig(
+            name=name,
+            category="native_hertz",
+            description=description,
+            particles=particles,
+            wall_contact=wall_contact,
+            use_jkr=False,
+            stop_time=5.0e-7,
+            restart_time=None,
+            monitor_interval=1.0e-9,
+            restart_interval=5.0e-7,
+            vtk_interval=1.0e-9,
+            des_usr_var_size=1,
+            monitor_user_variables=(),
+            expected_initial_overlap=initial_gap_or_overlap,
+            contact_time_speed=1.0,
+            write_vtk_files=True,
+        )
+
+    return (
+        make_case(
+            name="pair_hertz_normal",
+            description="native Hertz equal-particle normal collision",
+            particles=pair_particles,
+            wall_contact=False,
+            initial_gap_or_overlap=-0.2e-6,
+        ),
+        make_case(
+            name="wall_hertz_normal",
+            description="native Hertz particle-wall normal collision",
+            particles=wall_normal_particle,
+            wall_contact=True,
+            initial_gap_or_overlap=0.2e-6,
+        ),
+        make_case(
+            name="wall_hertz_oblique",
+            description="native Hertz particle-wall oblique friction collision",
+            particles=wall_oblique_particle,
+            wall_contact=True,
+            initial_gap_or_overlap=0.2e-6,
+        ),
+    )
 
 
 def comparison_tolerances() -> dict[str, tuple[float, float]]:

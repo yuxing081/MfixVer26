@@ -244,3 +244,57 @@ def adhesion_only_critical_speed(
         * parameters.effective_radius**4
         / parameters.effective_young_modulus**2
     ) ** (1.0 / 6.0)
+
+@dataclass(frozen=True)
+class JkrKeyPoint:
+    name: str
+    contact_radius: float
+    overlap: float
+    normal_force: float
+
+
+def overlap_from_contact_radius(
+    contact_radius: float,
+    parameters: ContactParameters,
+) -> float:
+    """Return overlap on the JKR displacement-controlled branch."""
+    if contact_radius < 0.0:
+        raise ValueError("Contact radius cannot be negative")
+    ratio = contact_radius / parameters.equilibrium_contact_radius
+    return (
+        6.0 ** (1.0 / 3.0)
+        * parameters.critical_separation
+        * (2.0 * ratio**2 - (4.0 / 3.0) * math.sqrt(ratio))
+    )
+
+
+def jkr_key_points(
+    parameters: ContactParameters,
+) -> tuple[JkrKeyPoint, ...]:
+    """Return audited stable-branch points used for MFIX comparisons.
+
+    The maximum-tension point has force -Fc. The critical-separation endpoint
+    is the displacement-controlled loss-of-stability point and has force
+    -5 Fc / 9; these two points must not be conflated.
+    """
+    radius_ratios = (
+        ("critical_separation", (1.0 / 6.0) ** (2.0 / 3.0)),
+        ("maximum_tension", (1.0 / 2.0) ** (2.0 / 3.0)),
+        ("zero_overlap", (2.0 / 3.0) ** (2.0 / 3.0)),
+        ("zero_force_equilibrium", 1.0),
+    )
+    return tuple(
+        JkrKeyPoint(
+            name=name,
+            contact_radius=parameters.equilibrium_contact_radius * ratio,
+            overlap=overlap_from_contact_radius(
+                parameters.equilibrium_contact_radius * ratio,
+                parameters,
+            ),
+            normal_force=elastic_normal_force(
+                parameters.equilibrium_contact_radius * ratio,
+                parameters,
+            ),
+        )
+        for name, ratio in radius_ratios
+    )

@@ -10,6 +10,8 @@ from validation.jkr_tools.reference import (
     effective_radius,
     effective_surface_energy,
     elastic_normal_force,
+    jkr_key_points,
+    overlap_from_contact_radius,
     stable_contact_radius,
 )
 
@@ -116,6 +118,66 @@ class DampingAndCriticalSpeedTests(unittest.TestCase):
     def test_wall_critical_speed_matches_audited_legacy_value(self):
         speed = adhesion_only_critical_speed(wall_parameters())
         self.assertAlmostEqual(speed, 0.32816731034019575)
+
+
+class JkrKeyPointTests(unittest.TestCase):
+    def points_by_name(self):
+        return {
+            point.name: point
+            for point in jkr_key_points(wall_parameters())
+        }
+
+    def test_critical_separation_is_not_maximum_tension(self):
+        parameters = wall_parameters()
+        points = self.points_by_name()
+        critical = points["critical_separation"]
+        maximum = points["maximum_tension"]
+        self.assertAlmostEqual(
+            critical.overlap / parameters.critical_separation,
+            -1.0,
+        )
+        self.assertAlmostEqual(
+            critical.normal_force / parameters.pull_off_force_magnitude,
+            -5.0 / 9.0,
+        )
+        self.assertAlmostEqual(
+            maximum.normal_force / parameters.pull_off_force_magnitude,
+            -1.0,
+        )
+        self.assertGreater(maximum.overlap, critical.overlap)
+
+    def test_zero_overlap_point_is_tensile(self):
+        parameters = wall_parameters()
+        point = self.points_by_name()["zero_overlap"]
+        self.assertAlmostEqual(
+            point.overlap / parameters.critical_separation,
+            0.0,
+            delta=1.0e-14,
+        )
+        self.assertAlmostEqual(
+            point.normal_force / parameters.pull_off_force_magnitude,
+            -8.0 / 9.0,
+        )
+
+    def test_zero_force_equilibrium_has_positive_overlap(self):
+        point = self.points_by_name()["zero_force_equilibrium"]
+        self.assertGreater(point.overlap, 0.0)
+        self.assertAlmostEqual(point.normal_force, 0.0, delta=1.0e-24)
+
+    def test_key_point_overlap_inverts_to_contact_radius(self):
+        parameters = wall_parameters()
+        for point in jkr_key_points(parameters):
+            with self.subTest(point=point.name):
+                recovered = stable_contact_radius(point.overlap, parameters)
+                self.assertAlmostEqual(
+                    recovered / point.contact_radius,
+                    1.0,
+                    delta=1.0e-12,
+                )
+
+    def test_negative_contact_radius_is_rejected(self):
+        with self.assertRaises(ValueError):
+            overlap_from_contact_radius(-1.0e-9, wall_parameters())
 
 
 if __name__ == "__main__":

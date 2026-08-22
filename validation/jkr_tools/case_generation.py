@@ -145,6 +145,7 @@ def mfix_dat_text(
     run_type: str,
     stop_time: float,
     partition: tuple[int, int, int],
+    include_jkr_keywords: bool = True,
 ) -> str:
     if run_type not in {"new", "restart_1", "restart_2"}:
         raise ValueError(f"unsupported run_type: {run_type}")
@@ -227,7 +228,7 @@ def mfix_dat_text(
         "max_nit = 50",
         f"res_dt = {case.restart_interval:.12e}",
         "write_part_out = .True.",
-        "write_vtk_files = .False.",
+        f"write_vtk_files = {boolean_text(case.write_vtk_files)}",
         "time_dependent_filename = .True.",
     ))
     _add_domain(lines, "vtk", domain)
@@ -237,6 +238,7 @@ def mfix_dat_text(
         "vtk_data(1) = 'P'",
         "vtk_part_vel(1) = .True.",
         "vtk_part_angular_vel(1) = .True.",
+        "vtk_part_coll_force(1) = .True.",
         "vtk_part_phase_id(1) = .True.",
     ))
     lines.extend(
@@ -249,15 +251,18 @@ def mfix_dat_text(
         f"nodesi = {partition[0]}",
         f"nodesj = {partition[1]}",
         f"nodesk = {partition[2]}",
-        f"des_surface_energy(1) = {material.surface_energy:.12e}",
-        f"des_surface_energy_wall = {material.wall_surface_energy:.12e}",
-        f"jkr_alpha_safety = {material.jkr_safety_factor:.12e}",
-        f"jkr_thetar_crit = {material.rolling_angle:.12e}",
-        f"use_jkr = {boolean_text(case.use_jkr)}",
-        f"wall_jkr_thetar_crit = {material.wall_rolling_angle:.12e}",
     ))
-    return "\n".join(lines) + "\n"
+    if include_jkr_keywords:
+        lines.extend((
+            f"des_surface_energy(1) = {material.surface_energy:.12e}",
+            f"des_surface_energy_wall = {material.wall_surface_energy:.12e}",
+            f"jkr_alpha_safety = {material.jkr_safety_factor:.12e}",
+            f"jkr_thetar_crit = {material.rolling_angle:.12e}",
+            f"use_jkr = {boolean_text(case.use_jkr)}",
+            f"wall_jkr_thetar_crit = {material.wall_rolling_angle:.12e}",
+        ))
 
+    return "\n".join(lines) + "\n"
 def keyword_count(mfix_text: str, keyword: str) -> int:
     pattern = re.compile(
         rf"^\s*{re.escape(keyword)}(?:\([^\n=]*\))?\s*=",
@@ -297,14 +302,23 @@ def validate_generated_case(
     case: CaseConfig,
     material: MaterialConfig,
     numerical: NumericalConfig,
+    include_jkr_keywords: bool = True,
 ) -> tuple[str, ...]:
     errors = []
-    for keyword in ("run_name", "run_type", "dt", "particles", "use_jkr"):
+    for keyword in ("run_name", "run_type", "dt", "particles"):
         count = keyword_count(mfix_text, keyword)
         if count != 1:
             errors.append(f"{keyword} occurs {count} times; expected once")
-    if f"use_jkr = {boolean_text(case.use_jkr)}".lower() not in mfix_text.lower():
-        errors.append("use_jkr does not match case purpose")
+    use_jkr_count = keyword_count(mfix_text, "use_jkr")
+    if include_jkr_keywords:
+        if use_jkr_count != 1:
+            errors.append(f"use_jkr occurs {use_jkr_count} times; expected once")
+        if f"use_jkr = {boolean_text(case.use_jkr)}".lower() not in mfix_text.lower():
+            errors.append("use_jkr does not match case purpose")
+    elif use_jkr_count != 0:
+        errors.append("official-compatible input contains use_jkr")
+    elif case.use_jkr:
+        errors.append("cannot omit JKR keywords for a JKR-enabled case")
     rows = particle_data_rows(particle_text)
     if len(rows) != len(case.particles):
         errors.append(f"particle count is {len(rows)}; expected {len(case.particles)}")
@@ -347,13 +361,21 @@ def write_case_files(
     run_type: str,
     stop_time: float,
     partition: tuple[int, int, int],
+    include_jkr_keywords: bool = True,
 ) -> None:
     mfix_text = mfix_dat_text(
-        case, material, numerical, run_name, run_type, stop_time, partition
+        case,
+        material,
+        numerical,
+        run_name,
+        run_type,
+        stop_time,
+        partition,
+        include_jkr_keywords,
     )
     particle_text = particle_input_text(case.particles)
     errors = validate_generated_case(
-        mfix_text, particle_text, case, material, numerical
+        mfix_text, particle_text, case, material, numerical, include_jkr_keywords
     )
     if errors:
         raise ValueError("; ".join(errors))

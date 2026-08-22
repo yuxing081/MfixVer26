@@ -9,8 +9,9 @@
 - 生产源码基线：`954ea0b9639592b9632c4f8fba92d23eabf42b99`。
 - 串行 solver SHA-256：`0e7a4e7e8fad556481bcb11bd76aed0508b180c7a5e0944aaca681dfc8a0ab6f`。
 - DMP solver SHA-256：`3523a0d4352431534f8576e905201c04abc7105ba6902f721552916a182ab26c`。
-- 最后完整证据：`/home/yuxing/mfix/MfixVer26/validation/results/runs/20260822T095448.025415Z-107484`。
-- 已通过：40 个单元测试、serial pair/wall RESTART_1 末态逐字节回归、RESTART_2 敏感性负对照。
+- 最新完整证据：`/home/yuxing/mfix/MfixVer26/validation/results/runs/20260822T114550.104470Z-132230`（unit + Hertz + restart 全部 PASS）。
+- 前一 restart 基线：`/home/yuxing/mfix/MfixVer26/validation/results/runs/20260822T095448.025415Z-107484`。
+- 已通过：53 个单元测试、3 个官方 MFIX26 原生 Hertz 保护工况、serial pair/wall RESTART_1 末态逐字节回归、RESTART_2 敏感性负对照。
 
 ## 本轮目标与顺序
 
@@ -35,11 +36,11 @@
 
 | 阶段 | 状态 | 最近证据/阻塞 |
 |---|---|---|
-| 验证框架与统一 restart | PASS | 40 unit tests；最终 all 证据见当前基线 |
-| 文献和旧测试过程审查 | IN PROGRESS | 只读审查 `versions/docs/references` 与 `versions/test` |
-| 原生 Hertz 保护 | NEXT | 需要定位/构建未修改 MFIX26 基准 solver |
-| JKR 理论关键点 | NEXT | 独立参考函数已有基础，待补关键点单测 |
-| 基础 capture/rebound | PENDING | 等关键点和 Hertz 基线 |
+| 验证框架与统一 restart | PASS | 53 unit tests；restart 证据见当前基线 |
+| 文献和旧测试过程审查 | PASS | 4 篇直接相关论文复制到 `docs/references`，旧目录只读 |
+| 原生 Hertz 保护 | PASS | stock module `3e95ef9e…be6b7`；pair/wall normal、wall oblique 三组共同 501 帧及双精度末态完全一致；迁移 solver 仅多写一个逐字节重复末帧 |
+| JKR 理论关键点 | PASS | 已单测最大拉力、临界分离、零重叠和平衡点，明确最大拉力与临界分离不是同一点 |
+| 基础 capture/rebound | NEXT | Hertz 与关键点基线已通过 |
 | 速度扫描 | PENDING | 等基础工况 |
 | 异质表面能 | PENDING | 等基础工况 |
 | 壁面几何 | PENDING | 等基础工况 |
@@ -50,4 +51,7 @@
 
 - 预期单颗粒不会同时接触超过 8 个壁面；超过 8 个墙面接触暂不纳入。
 - SuperDEM/GSP 不在当前 JKR 验证范围。
+- 标准 VTP 会把双精度值转换为 Float32；restart 内部历史必须使用独立、默认关闭的双精度诊断输出。
+- 当前 wall contact 历史槽初值为 8；JKR+DMP 超过容量会显式报错，本阶段不覆盖该范围。
+- DMP unpack 的邻居 fallback 分支使用 owner IJK 定位 neighbor，已列为 2-rank 跨区测试重点观察项，尚不先行修改生产代码。
 - 大型运行输出不提交 Git，只记录绝对路径、时间和 solver hash。

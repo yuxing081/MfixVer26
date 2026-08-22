@@ -18,14 +18,22 @@ from typing import Any
 
 from validation.jkr_tools.case_generation import write_case_files
 from validation.jkr_tools.config import (
+    comparison_tolerances,
+    hertz_case_configs,
     default_material_config,
     default_numerical_config,
     restart_case_configs,
+)
+from validation.jkr_tools.hertz import (
+    compare_case_trajectories,
+    extract_contact_metrics,
 )
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_SOLVER = PROJECT_ROOT / "code" / "build" / "mfixsolver"
+DEFAULT_NATIVE_WRAPPER = Path("/home/yuxing/miniforge3/envs/mfix-26.1.2/bin/mfixsolver")
+DEFAULT_NATIVE_MODULE = Path("/home/yuxing/miniforge3/envs/mfix-26.1.2/bin/mfixsolver.so")
 RESULTS_ROOT = PROJECT_ROOT / "validation" / "results" / "runs"
 
 
@@ -111,11 +119,11 @@ def timestamped_run_directory() -> Path:
     return directory
 
 
-def run_solver(solver: Path, case_directory: Path) -> tuple[bool, str]:
+def run_solver(command: tuple[str, ...], case_directory: Path) -> tuple[bool, str]:
     log_path = case_directory / "solver.log"
     with log_path.open("w", encoding="utf-8") as log:
         completed = subprocess.run(
-            [str(solver)],
+            command,
             cwd=case_directory,
             check=False,
             stdout=log,
@@ -176,6 +184,167 @@ def compare_particle_output(
     }
 
 
+def _file_hashes(directory: Path, pattern: str) -> dict[str, str]:
+    return {
+        path.name: file_sha256(path)
+        for path in sorted(directory.glob(pattern))
+        if path.is_file()
+    }
+
+
+def compare_hertz_file_evidence(
+    official_directory: Path,
+    migrated_directory: Path,
+) -> dict[str, Any]:
+    official_particle = official_directory / "particle_output.csv"
+    migrated_particle = migrated_directory / "particle_output.csv"
+    if not official_particle.is_file() or not migrated_particle.is_file():
+        return {"passed": False, "reason": "particle_output.csv is missing"}
+    official_vtp = _file_hashes(official_directory, "PARTICLES_*.vtp")
+    migrated_vtp = _file_hashes(migrated_directory, "PARTICLES_*.vtp")
+    if not official_vtp or not migrated_vtp:
+        return {"passed": False, "reason": "particle VTP trajectory is missing"}
+    particle_hashes = {
+        "official": file_sha256(official_particle),
+        "migrated": file_sha256(migrated_particle),
+    }
+    shared_names = sorted(set(official_vtp) & set(migrated_vtp))
+    differing_vtp = tuple(
+        name for name in shared_names
+        if official_vtp[name] != migrated_vtp[name]
+    )
+    extra_official = tuple(sorted(set(official_vtp) - set(migrated_vtp)))
+    extra_migrated = tuple(sorted(set(migrated_vtp) - set(official_vtp)))
+    extra_names = extra_official + extra_migrated
+    last_shared_name = shared_names[-1] if shared_names else None
+    last_shared_hash = official_vtp[last_shared_name] if last_shared_name else None
+    trailing_duplicates = bool(shared_names) and all(
+        name > last_shared_name
+        and (official_vtp | migrated_vtp)[name] == last_shared_hash
+        for name in extra_names
+    )
+    return {
+        "passed": (
+            particle_hashes["official"] == particle_hashes["migrated"]
+            and not differing_vtp
+            and (not extra_names or trailing_duplicates)
+            and bool(shared_names)
+        ),
+        "particle_output": {
+            "comparison": "byte-identical double-precision final output",
+            "sha256": particle_hashes,
+            "matches": particle_hashes["official"] == particle_hashes["migrated"],
+        },
+        "vtp": {
+            "comparison": "byte-identical Float32 trajectory evidence",
+            "file_count": {
+                "official": len(official_vtp),
+                "migrated": len(migrated_vtp),
+            },
+            "differing_files": differing_vtp,
+            "extra_official": extra_official,
+            "extra_migrated": extra_migrated,
+            "extra_files_are_duplicate_final_frames": trailing_duplicates,
+        },
+    }
+
+
+def run_hertz_case(
+    solver: Path,
+    native_wrapper: Path,
+    native_module: Path,
+    case: Any,
+    run_directory: Path,
+    metadata: dict[str, Any],
+) -> dict[str, Any]:
+    material = default_material_config()
+    numerical = default_numerical_config()
+    case_root = run_directory / case.name
+    official_directory = case_root / "official"
+    migrated_directory = case_root / "migrated"
+    run_name = f"R26_{case.name.upper()}"
+    for directory in (official_directory, migrated_directory):
+        write_case_files(
+            output_directory=directory,
+            case=case,
+            material=material,
+            numerical=numerical,
+            run_name=run_name,
+            run_type="new",
+            stop_time=case.stop_time,
+            partition=numerical.serial_partition,
+            include_jkr_keywords=False,
+        )
+    write_case_metadata(case_root / "metadata.json", {
+        **metadata,
+        "native_solver": {
+            "wrapper": str(native_wrapper),
+            "wrapper_sha256": file_sha256(native_wrapper),
+            "module": str(native_module),
+            "module_sha256": file_sha256(native_module),
+        },
+        "input_contract": "identical stock-compatible input without JKR extensions",
+    }, case)
+    statuses = {
+        "official": run_solver(
+            (str(native_wrapper), "-f", "mfix.dat"), official_directory
+        ),
+        "migrated": run_solver((str(solver),), migrated_directory),
+    }
+    if not all(status[0] for status in statuses.values()):
+        return {
+            "case": case.name,
+            "passed": False,
+            "directory": str(case_root),
+            "solver_status": statuses,
+        }
+    comparison = compare_hertz_file_evidence(
+        official_directory, migrated_directory
+    )
+    configured_tolerances = comparison_tolerances()
+    trajectory_comparison = compare_case_trajectories(
+        official_directory,
+        migrated_directory,
+        pattern="PARTICLES_*.vtp",
+        tolerances={
+            "Coordinates": configured_tolerances["vtp_position"],
+            "Velocity": configured_tolerances["vtp_velocity"],
+            "Angular_velocity": configured_tolerances["vtp_angular_velocity"],
+            "Collision_force": configured_tolerances["vtp_force"],
+        },
+    )
+    official_paths = tuple(sorted(official_directory.glob("PARTICLES_*.vtp")))
+    migrated_paths = tuple(sorted(migrated_directory.glob("PARTICLES_*.vtp")))
+    metric_arguments = {
+        "contact_kind": "wall" if case.wall_contact else "pair",
+        "particle_radius": material.particle_radius,
+    }
+    official_metrics = extract_contact_metrics(
+        official_paths, **metric_arguments
+    )
+    migrated_metrics = extract_contact_metrics(
+        migrated_paths, **metric_arguments
+    )
+    metrics = {
+        "official": official_metrics,
+        "migrated": migrated_metrics,
+        "matches": official_metrics == migrated_metrics,
+    }
+    return {
+        "case": case.name,
+        "passed": (
+            comparison["passed"]
+            and trajectory_comparison["passed"]
+            and metrics["matches"]
+        ),
+        "directory": str(case_root),
+        "solver_status": statuses,
+        "trajectory_comparison": trajectory_comparison,
+        "contact_metrics": metrics,
+        "comparison": comparison,
+    }
+
+
 def write_case_metadata(
     path: Path,
     metadata: dict[str, Any],
@@ -226,7 +395,7 @@ def run_restart_case(
         )
     statuses = {}
     for branch in ("continuous", "stage1"):
-        statuses[branch] = run_solver(solver, case_root / branch)
+        statuses[branch] = run_solver((str(solver),), case_root / branch)
         if not statuses[branch][0]:
             return {
                 "case": case.name,
@@ -240,7 +409,7 @@ def run_restart_case(
         )
     remove_restart_2_history(case_root / "restart2", split_name)
     for branch in ("restart1", "restart2"):
-        statuses[branch] = run_solver(solver, case_root / branch)
+        statuses[branch] = run_solver((str(solver),), case_root / branch)
     restart1 = compare_particle_output(
         case_root / "continuous", case_root / "restart1"
     )
@@ -319,12 +488,24 @@ def write_summary(run_directory: Path, results: list[dict[str, Any]]) -> None:
 
 def parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument("suite", choices=("unit", "restart", "all"))
+    parser.add_argument("suite", choices=("unit", "hertz", "restart", "all"))
     parser.add_argument(
         "--solver",
         type=Path,
         default=DEFAULT_SOLVER,
         help="MFIX 26.1.2 serial solver",
+    )
+    parser.add_argument(
+        "--native-wrapper",
+        type=Path,
+        default=DEFAULT_NATIVE_WRAPPER,
+        help="official MFIX 26.1.2 pymfix wrapper",
+    )
+    parser.add_argument(
+        "--native-module",
+        type=Path,
+        default=DEFAULT_NATIVE_MODULE,
+        help="official unmodified MFIX 26.1.2 solver module",
     )
     return parser.parse_args()
 
@@ -334,6 +515,17 @@ def main() -> int:
     solver = arguments.solver.expanduser().resolve()
     if not solver.is_file() or not os.access(solver, os.X_OK):
         raise FileNotFoundError(f"solver is not executable: {solver}")
+    native_wrapper = arguments.native_wrapper.expanduser().resolve()
+    native_module = arguments.native_module.expanduser().resolve()
+    if arguments.suite in {"hertz", "all"}:
+        if not native_wrapper.is_file() or not os.access(native_wrapper, os.X_OK):
+            raise FileNotFoundError(
+                f"native solver wrapper is not executable: {native_wrapper}"
+            )
+        if not native_module.is_file():
+            raise FileNotFoundError(
+                f"native solver module does not exist: {native_module}"
+            )
     run_directory = timestamped_run_directory()
     metadata = environment_metadata(solver)
     (run_directory / "metadata.json").write_text(
@@ -343,6 +535,24 @@ def main() -> int:
     results = []
     if arguments.suite in {"unit", "all"}:
         results.append(run_unit_suite(run_directory))
+    if arguments.suite in {"hertz", "all"}:
+        for case in hertz_case_configs(default_material_config()):
+            try:
+                results.append(run_hertz_case(
+                    solver,
+                    native_wrapper,
+                    native_module,
+                    case,
+                    run_directory,
+                    metadata,
+                ))
+            except Exception as error:
+                results.append({
+                    "case": case.name,
+                    "passed": False,
+                    "directory": str(run_directory / case.name),
+                    "reason": f"{type(error).__name__}: {error}",
+                })
     if arguments.suite in {"restart", "all"}:
         for case in restart_case_configs(default_material_config()):
             try:

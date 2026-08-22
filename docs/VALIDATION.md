@@ -6,9 +6,11 @@
 
 - MFIX 版本：26.1.2。
 - JKR Git commit：`954ea0b9639592b9632c4f8fba92d23eabf42b99`。
-- 当前验证工作树：dirty；新增验证框架尚未提交，完整 porcelain 状态保存在每次运行的 `metadata.json`。
+- 验证框架基线 commit：`3388a6e53e6867b9393a200d20350cf834b9fac2`；当前测试阶段为 dirty，完整 porcelain 状态保存在每次运行的 `metadata.json`。
 - 串行 solver：`/home/yuxing/mfix/MfixVer26/code/build/mfixsolver`。
 - 串行 solver SHA-256：`0e7a4e7e8fad556481bcb11bd76aed0508b180c7a5e0944aaca681dfc8a0ab6f`。
+- 官方 stock serial module：`/home/yuxing/miniforge3/envs/mfix-26.1.2/bin/mfixsolver.so`。
+- 官方 stock module SHA-256：`3e95ef9efd32f8fe77ad991758adf16938bca7be617b7ec19852438d538be6b7`。
 - 构建编译器：`/home/yuxing/miniforge3/envs/mfix-26.1.2/bin/gfortran`，GNU Fortran 15.3.0。
 - 当前已验收执行环境：serial，1 process，分区 1×1×1。
 - DMP 目标环境：2 ranks，分区 2×1×1；尚未在本体系中重新验收。
@@ -41,13 +43,14 @@
 - 正向为压缩，负向为拉伸。
 
 这些公式从旧 `versions/test/jkr_tools/reference.py` 审查后重写为显式标量函数；没有直接复制旧运行结果。
+理论单测明确区分最大拉力点 `F=-F_c` 与位移控制临界分离端点 `F=-5F_c/9`；另外检查零重叠点 `F=-8F_c/9` 和零力平衡点。
 
 ### 2.2 输入生成与前置检查
 
 所有共享物理和数值参数集中在 `validation/jkr_tools/config.py`。case 生成器在写入前检查：
 
 - 必需关键字存在且只出现一次；
-- `use_jkr` 与工况目的相符；
+- JKR 工况的 `use_jkr` 与目的相符；stock Hertz 输入则完全移除 `use_jkr`、`jkr_*` 和表面能扩展关键字；
 - 粒子数量、user scalar 列数正确；
 - 粒子位于域内；
 - 初始颗粒对重叠或墙面间隙符合配置；
@@ -76,12 +79,12 @@ Float32 VTP 只用于轨迹和可视化，不能替代 restart 边界的双精�
 
 | 类别 | 工况 | 比较对象 | 主要指标 | 判据 | 状态 |
 |---|---|---|---|---|---|
-| Unit | JKR reference | 独立公式与审查基准 | gamma、W、R/E/G、a0、delta_c、Fc、临界速度 | 40 个单元测试整体通过 | PASS |
+| Unit | JKR reference | 独立公式与审查基准 | gamma、W、R/E/G、a0、delta_c、Fc、临界速度 | 48 个单元测试整体通过 | PASS |
 | Unit | case generation | 配置与生成文本 | 唯一关键字、粒子数、几何、dt、输出 | 任一前置检查失败即 FAIL | PASS |
 | Unit | I/O and comparison | 合成 CSV/monitor/VTP | 精度元数据、插值、global ID、pair ID | 重复/缺失/时间错位必须拒绝 | PASS |
-| A 原生保护 | pair Hertz normal | 官方 26.1.2 vs custom JKR-off | x、v、omega、接触时间、重叠、力 | 双精度分层容差内一致 | PLANNED |
-| A 原生保护 | wall Hertz normal | 官方 26.1.2 vs custom JKR-off | 同上 | 双精度分层容差内一致 | PLANNED |
-| A 原生保护 | oblique Hertz friction | 官方 26.1.2 vs custom JKR-off | 切向冲量、omega、切向力 | 双精度分层容差内一致 | PLANNED |
+| A 原生保护 | pair Hertz normal | 官方 26.1.2 vs custom JKR-off | x、v、omega、重叠、碰撞力、末态 | 共同 VTP 帧及双精度末态完全一致 | PASS |
+| A 原生保护 | wall Hertz normal | 官方 26.1.2 vs custom JKR-off | 同上 | 共同 VTP 帧及双精度末态完全一致 | PASS |
+| A 原生保护 | oblique Hertz friction | 官方 26.1.2 vs custom JKR-off | 切向运动、omega、碰撞力、末态 | 共同 VTP 帧及双精度末态完全一致 | PASS |
 | B 墙面 | wall_normal_capture/rebound | JKR 理论与 MFIX26 | 捕获、回弹、重叠、时长、Fc、能量 | 行为正确且误差不超容差 | PLANNED |
 | B 墙面 | wall_normal_velocity_sweep | 自适应速度扫描 | 临界区间、e_eff、重叠、时长 | 覆盖捕获/临界/回弹并加密一次 | PLANNED |
 | B 墙面 | oblique stick/rebound | 理论趋势与 MFIX26 | PFT、切向力、omega、能量 | 库仑限制和历史连续 | PLANNED |
@@ -110,15 +113,46 @@ Float32 VTP 只用于轨迹和可视化，不能替代 restart 边界的双精�
 
 结果目录：
 
-`/home/yuxing/mfix/MfixVer26/validation/results/runs/20260822T095448.025415Z-107484`
+`/home/yuxing/mfix/MfixVer26/validation/results/runs/20260822T114550.104470Z-132230`
 
-结果：40 tests，全部通过。覆盖 8 个 case-generation、9 个 comparison、5 个 I/O、15 个 reference 和 3 个 plotting 数据检查。
+结果：53 tests，全部通过；新增 stock-compatible 输入契约、JKR 最大拉力/临界分离关键点，以及按 global `Particle_ID` 对齐的 Hertz 轨迹与指标检查。
 
-### 4.2 串行 restart
+### 4.2 原生 Hertz 保护
+
+命令：
+
+    ./validation/run_validation.sh hertz
+
+证据目录：
+
+`/home/yuxing/mfix/MfixVer26/validation/results/runs/20260822T114550.104470Z-132230`
+
+对照双方使用逐字节相同的 stock-compatible `mfix.dat` 和
+`particle_input.dat`。输入保留 `des_coll_model='HERTZIAN'`、材料、网格、
+初始条件和输出设置，但不包含 stock MFIX26 不认识的 `use_jkr`、`jkr_*`
+或表面能扩展关键字。
+
+| 工况 | `e_eff` | 最大重叠 (m) | 接触时长 (s) | 最大轨迹误差 | 结果 |
+|---|---:|---:|---:|---:|---|
+| pair_hertz_normal | 0.59999436 | 1.7400680e-8 | 6.4998258e-8 | 0（x/v/omega/force） | PASS |
+| wall_hertz_normal | 0.60566479 | 1.5191520e-8 | 5.5996958e-8 | 0（x/v/omega/force） | PASS |
+| wall_hertz_oblique | 0.60566479 | 1.5191520e-8 | 5.5996958e-8 | 0（x/v/omega/force） | PASS |
+
+迁移 solver 每个工况额外写出 `PARTICLES_0501.vtp`；其物理时间和内容均
+与共同末帧 `PARTICLES_0500.vtp` 逐字节相同，因此记录为输出调度差异，
+不当作物理差异。比较器只允许位于末尾且与最后共同帧完全相同的额外帧；
+共同帧缺失、字段差异或非重复额外帧仍判为 FAIL。
+
+官方 module SHA-256 为
+`3e95ef9efd32f8fe77ad991758adf16938bca7be617b7ec19852438d538be6b7`；
+迁移 solver SHA-256 为
+`0e7a4e7e8fad556481bcb11bd76aed0508b180c7a5e0944aaca681dfc8a0ab6f`。
+
+### 4.3 串行 restart
 
 最终证据目录：
 
-`/home/yuxing/mfix/MfixVer26/validation/results/runs/20260822T095448.025415Z-107484`
+`/home/yuxing/mfix/MfixVer26/validation/results/runs/20260822T114550.104470Z-132230`
 
 运行信息：
 
@@ -139,7 +173,7 @@ Float32 VTP 只用于轨迹和可视化，不能替代 restart 边界的双精�
 
 ## 5. 已知限制
 
-- 尚未重新执行原生 Hertz 保护、基础捕获/回弹、速度扫描、异质表面能、壁面几何和 DMP 矩阵；旧 MFIX23 或迁移期记录不会自动转为 PASS。
+- 尚未重新执行基础捕获/回弹、速度扫描、异质表面能、壁面几何和 DMP 矩阵；旧 MFIX23 或迁移期记录不会自动转为 PASS。
 - 当前 restart 正向判据覆盖双精度末态，但尚未在 restart 边界导出并逐字段比较 NEIGHBORS、PFT、PFR、JKR_CONTACT_STATE、墙面 facet 和 wall history；这是进入完整 restart 验收前的主要缺口。
 - Float32 VTP 不能用于边界历史的严格相等判断。
 - 当前实现使用固定墙面历史槽；预期工况中单颗粒不会同时接触超过 8 个壁面。超过 8 个壁面接触暂不测试，记录为范围限制。
@@ -157,9 +191,10 @@ Float32 VTP 只用于轨迹和可视化，不能替代 restart 边界的双精�
 - serial 颗粒对和斜碰墙面 RESTART_1 末态回归；
 - RESTART_2 敏感性负对照。
 
+- 官方 stock MFIX26 与迁移 solver 的 pair normal、wall normal 和 wall oblique Hertz 保护对照；
+- JKR 最大拉力、临界分离、零重叠和平衡关键点单测；
 尚未通过且阻塞完整生产验收：
 
-- MFIX 26.1.2 官方 Hertz 保护对照；
 - 基础墙面/颗粒对物理与速度扫描；
 - 异质表面能和壁面几何；
 - 2-rank DMP；

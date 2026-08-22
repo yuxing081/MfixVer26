@@ -15,6 +15,7 @@ from validation.jkr_tools.case_generation import (
 from validation.jkr_tools.config import (
     default_material_config,
     default_numerical_config,
+    hertz_case_configs,
     restart_case_config,
 )
 
@@ -128,6 +129,82 @@ class RestartCaseGenerationTests(unittest.TestCase):
                     stop_time=case.stop_time,
                     partition=self.numerical.serial_partition,
                 )
+
+
+class NativeHertzCaseGenerationTests(unittest.TestCase):
+    def setUp(self):
+        self.material = default_material_config()
+        self.numerical = default_numerical_config()
+
+    def generated_text(self, case):
+        mfix_text = mfix_dat_text(
+            case=case,
+            material=self.material,
+            numerical=self.numerical,
+            run_name=case.name.upper(),
+            run_type="new",
+            stop_time=case.stop_time,
+            partition=self.numerical.serial_partition,
+            include_jkr_keywords=False,
+        )
+        return mfix_text, particle_input_text(case.particles)
+
+    def test_official_compatible_inputs_omit_all_jkr_extensions(self):
+        extension_keywords = (
+            "use_jkr",
+            "des_surface_energy",
+            "des_surface_energy_wall",
+            "jkr_alpha_safety",
+            "jkr_thetar_crit",
+            "wall_jkr_thetar_crit",
+        )
+        for case in hertz_case_configs(self.material):
+            with self.subTest(case_name=case.name):
+                mfix_text, particle_text = self.generated_text(case)
+                errors = validate_generated_case(
+                    mfix_text,
+                    particle_text,
+                    case,
+                    self.material,
+                    self.numerical,
+                    include_jkr_keywords=False,
+                )
+                self.assertEqual(errors, ())
+                for keyword in extension_keywords:
+                    self.assertEqual(keyword_count(mfix_text, keyword), 0)
+
+    def test_native_hertz_cases_enable_vtp_and_have_valid_geometry(self):
+        for case in hertz_case_configs(self.material):
+            with self.subTest(case_name=case.name):
+                mfix_text, _ = self.generated_text(case)
+                self.assertFalse(case.use_jkr)
+                self.assertIn("write_vtk_files = .True.", mfix_text)
+                if case.wall_contact:
+                    self.assertGreater(case.expected_initial_overlap, 0.0)
+                else:
+                    self.assertLess(case.expected_initial_overlap, 0.0)
+
+    def test_jkr_case_cannot_omit_extension_keywords(self):
+        case = restart_case_config("restart_pair_pfr", self.material)
+        mfix_text = mfix_dat_text(
+            case,
+            self.material,
+            self.numerical,
+            "INVALID_NATIVE",
+            "new",
+            case.stop_time,
+            self.numerical.serial_partition,
+            include_jkr_keywords=False,
+        )
+        errors = validate_generated_case(
+            mfix_text,
+            particle_input_text(case.particles),
+            case,
+            self.material,
+            self.numerical,
+            include_jkr_keywords=False,
+        )
+        self.assertIn("cannot omit JKR keywords for a JKR-enabled case", errors)
 
 
 if __name__ == "__main__":
