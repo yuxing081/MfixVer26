@@ -160,7 +160,9 @@ class NativeHertzCaseGenerationTests(unittest.TestCase):
             "jkr_thetar_crit",
             "wall_jkr_thetar_crit",
         )
-        for case in hertz_case_configs(self.material):
+        for case in hertz_case_configs(
+            self.material, self.numerical.normal_initial_gap_fraction
+        ):
             with self.subTest(case_name=case.name):
                 mfix_text, particle_text = self.generated_text(case)
                 errors = validate_generated_case(
@@ -176,7 +178,9 @@ class NativeHertzCaseGenerationTests(unittest.TestCase):
                     self.assertEqual(keyword_count(mfix_text, keyword), 0)
 
     def test_native_hertz_cases_enable_vtp_and_have_valid_geometry(self):
-        for case in hertz_case_configs(self.material):
+        for case in hertz_case_configs(
+            self.material, self.numerical.normal_initial_gap_fraction
+        ):
             with self.subTest(case_name=case.name):
                 mfix_text, _ = self.generated_text(case)
                 self.assertFalse(case.use_jkr)
@@ -219,6 +223,7 @@ class JkrNormalCaseGenerationTests(unittest.TestCase):
             self.material,
             self.wall_critical_speed,
             self.pair_critical_speed,
+            self.numerical.normal_initial_gap_fraction,
         )
 
     def test_case_names_and_speed_factors_are_explicit(self):
@@ -264,16 +269,22 @@ class JkrNormalCaseGenerationTests(unittest.TestCase):
                 self.assertIn("use_jkr = .True.", mfix_text)
 
     def test_wall_and_pair_start_with_gap_not_unintended_overlap(self):
+        expected_gap = (
+            self.numerical.normal_initial_gap_fraction
+            * self.material.particle_radius
+        )
         for case in self.cases:
             with self.subTest(case_name=case.name):
                 if case.wall_contact:
                     self.assertEqual(len(case.particles), 1)
-                    self.assertAlmostEqual(wall_gap(case.particles[0]), 0.2e-6)
+                    self.assertAlmostEqual(
+                        wall_gap(case.particles[0]), expected_gap
+                    )
                     self.assertGreater(wall_gap(case.particles[0]), 0.0)
                 else:
                     overlaps = pair_overlaps(case.particles)
                     self.assertEqual(len(overlaps), 1)
-                    self.assertAlmostEqual(overlaps[0], -0.2e-6)
+                    self.assertAlmostEqual(overlaps[0], -expected_gap)
                     self.assertLess(overlaps[0], 0.0)
 
     def test_non_positive_critical_speeds_are_rejected(self):
@@ -291,6 +302,7 @@ class JkrNormalCaseGenerationTests(unittest.TestCase):
                         self.material,
                         wall_speed,
                         pair_speed,
+                        self.numerical.normal_initial_gap_fraction,
                     )
 
 

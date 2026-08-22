@@ -34,6 +34,7 @@ class MaterialConfig:
 class NumericalConfig:
     domain_size: float
     mesh_cells: int
+    normal_initial_gap_fraction: float
     dtsolid_factor: float
     initial_dt_divisor: float
     minimum_dt_divisor: float
@@ -132,6 +133,7 @@ def default_numerical_config() -> NumericalConfig:
     return NumericalConfig(
         domain_size=20.0e-6,
         mesh_cells=6,
+        normal_initial_gap_fraction=0.05,
         dtsolid_factor=100.0,
         initial_dt_divisor=1.0e4,
         minimum_dt_divisor=1.0e6,
@@ -242,18 +244,24 @@ def restart_case_config(
 
 def hertz_case_configs(
     material: MaterialConfig,
+    initial_gap_fraction: float,
 ) -> tuple[CaseConfig, ...]:
+    if not 0.0 < initial_gap_fraction < 1.0:
+        raise ValueError("initial_gap_fraction must be between zero and one")
     diameter = 2.0 * material.particle_radius
+    initial_gap = initial_gap_fraction * material.particle_radius
+    pair_half_separation = material.particle_radius + 0.5 * initial_gap
+    pair_center_y = 10.0e-6
     pair_particles = (
         ParticleConfig(
-            position=(10.0e-6, 8.9e-6, 10.0e-6),
+            position=(10.0e-6, pair_center_y - pair_half_separation, 10.0e-6),
             velocity=(0.0, 0.5, 0.0),
             diameter=diameter,
             density=material.particle_density,
             surface_energy=material.surface_energy,
         ),
         ParticleConfig(
-            position=(10.0e-6, 11.1e-6, 10.0e-6),
+            position=(10.0e-6, pair_center_y + pair_half_separation, 10.0e-6),
             velocity=(0.0, -0.5, 0.0),
             diameter=diameter,
             density=material.particle_density,
@@ -262,7 +270,7 @@ def hertz_case_configs(
     )
     wall_normal_particle = (
         ParticleConfig(
-            position=(10.0e-6, 1.2e-6, 10.0e-6),
+            position=(10.0e-6, material.particle_radius + initial_gap, 10.0e-6),
             velocity=(0.0, -1.0, 0.0),
             diameter=diameter,
             density=material.particle_density,
@@ -271,7 +279,7 @@ def hertz_case_configs(
     )
     wall_oblique_particle = (
         ParticleConfig(
-            position=(10.0e-6, 1.2e-6, 10.0e-6),
+            position=(10.0e-6, material.particle_radius + initial_gap, 10.0e-6),
             velocity=(0.5, -1.0, 0.0),
             diameter=diameter,
             density=material.particle_density,
@@ -313,21 +321,21 @@ def hertz_case_configs(
             description="native Hertz equal-particle normal collision",
             particles=pair_particles,
             wall_contact=False,
-            initial_gap_or_overlap=-0.2e-6,
+            initial_gap_or_overlap=-initial_gap,
         ),
         make_case(
             name="wall_hertz_normal",
             description="native Hertz particle-wall normal collision",
             particles=wall_normal_particle,
             wall_contact=True,
-            initial_gap_or_overlap=0.2e-6,
+            initial_gap_or_overlap=initial_gap,
         ),
         make_case(
             name="wall_hertz_oblique",
             description="native Hertz particle-wall oblique friction collision",
             particles=wall_oblique_particle,
             wall_contact=True,
-            initial_gap_or_overlap=0.2e-6,
+            initial_gap_or_overlap=initial_gap,
         ),
     )
 
@@ -340,17 +348,23 @@ def _jkr_normal_case_configs(
     capture_factor: float,
     rebound_factor: float,
     damped_name: bool,
+    initial_gap_fraction: float,
 ) -> tuple[CaseConfig, ...]:
     """Return normal cases scaled from the adhesion-only critical speed."""
     if wall_critical_speed <= 0.0 or pair_critical_speed <= 0.0:
         raise ValueError("critical speeds must be positive")
     diameter = 2.0 * material.particle_radius
+    if not 0.0 < initial_gap_fraction < 1.0:
+        raise ValueError("initial_gap_fraction must be between zero and one")
+    initial_gap = initial_gap_fraction * material.particle_radius
+    pair_half_separation = material.particle_radius + 0.5 * initial_gap
+    pair_center_y = 10.0e-6
 
     def wall_case(
         name: str, speed: float, speed_factor: float, behavior: str
     ) -> CaseConfig:
         particle = ParticleConfig(
-            position=(10.0e-6, 1.2e-6, 10.0e-6),
+            position=(10.0e-6, material.particle_radius + initial_gap, 10.0e-6),
             velocity=(0.0, -speed, 0.0),
             diameter=diameter,
             density=material.particle_density,
@@ -372,7 +386,7 @@ def _jkr_normal_case_configs(
             vtk_interval=2.0e-9,
             des_usr_var_size=1,
             monitor_user_variables=(),
-            expected_initial_overlap=0.2e-6,
+            expected_initial_overlap=initial_gap,
             contact_time_speed=speed,
             write_vtk_files=True,
         )
@@ -382,14 +396,14 @@ def _jkr_normal_case_configs(
     ) -> CaseConfig:
         particles = (
             ParticleConfig(
-                position=(10.0e-6, 8.9e-6, 10.0e-6),
+                position=(10.0e-6, pair_center_y - pair_half_separation, 10.0e-6),
                 velocity=(0.0, 0.5 * speed, 0.0),
                 diameter=diameter,
                 density=material.particle_density,
                 surface_energy=material.surface_energy,
             ),
             ParticleConfig(
-                position=(10.0e-6, 11.1e-6, 10.0e-6),
+                position=(10.0e-6, pair_center_y + pair_half_separation, 10.0e-6),
                 velocity=(0.0, -0.5 * speed, 0.0),
                 diameter=diameter,
                 density=material.particle_density,
@@ -412,7 +426,7 @@ def _jkr_normal_case_configs(
             vtk_interval=2.0e-9,
             des_usr_var_size=1,
             monitor_user_variables=(),
-            expected_initial_overlap=-0.2e-6,
+            expected_initial_overlap=-initial_gap,
             contact_time_speed=speed,
             write_vtk_files=True,
         )
@@ -450,6 +464,7 @@ def elastic_jkr_normal_case_configs(
     material: MaterialConfig,
     wall_critical_speed: float,
     pair_critical_speed: float,
+    initial_gap_fraction: float,
 ) -> tuple[CaseConfig, ...]:
     if material.normal_restitution != 1.0:
         raise ValueError("elastic_jkr cases require normal_restitution=1")
@@ -461,6 +476,7 @@ def elastic_jkr_normal_case_configs(
         0.95,
         1.05,
         False,
+        initial_gap_fraction,
     )
 
 
@@ -468,6 +484,7 @@ def damped_jkr_normal_case_configs(
     material: MaterialConfig,
     wall_critical_speed: float,
     pair_critical_speed: float,
+    initial_gap_fraction: float,
 ) -> tuple[CaseConfig, ...]:
     if material.normal_restitution != 0.6:
         raise ValueError("damped cases require normal_restitution=0.6")
@@ -479,6 +496,7 @@ def damped_jkr_normal_case_configs(
         0.95,
         3.0,
         True,
+        initial_gap_fraction,
     )
 
 
@@ -486,24 +504,35 @@ def jkr_normal_case_configs(
     material: MaterialConfig,
     wall_critical_speed: float,
     pair_critical_speed: float,
+    initial_gap_fraction: float,
 ) -> tuple[CaseConfig, ...]:
     """Compatibility wrapper selected explicitly by restitution."""
     if material.normal_restitution == 1.0:
         return elastic_jkr_normal_case_configs(
-            material, wall_critical_speed, pair_critical_speed
+            material,
+            wall_critical_speed,
+            pair_critical_speed,
+            initial_gap_fraction,
         )
     return damped_jkr_normal_case_configs(
-        material, wall_critical_speed, pair_critical_speed
+        material,
+        wall_critical_speed,
+        pair_critical_speed,
+        initial_gap_fraction,
     )
 
 def elastic_hertz_case_configs(
     material: MaterialConfig,
     wall_critical_speed: float,
     pair_critical_speed: float,
+    initial_gap_fraction: float,
 ) -> tuple[CaseConfig, ...]:
     """Return Hertz controls at the exact four elastic-JKR impact speeds."""
     jkr_cases = elastic_jkr_normal_case_configs(
-        material, wall_critical_speed, pair_critical_speed
+        material,
+        wall_critical_speed,
+        pair_critical_speed,
+        initial_gap_fraction,
     )
     return tuple(
         replace(

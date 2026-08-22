@@ -7,6 +7,8 @@ from pathlib import Path
 from validation.jkr_tools.case_generation import (
     canonical_case_sync_errors,
     copy_canonical_case_asset,
+    pair_overlaps,
+    wall_gap,
 )
 from validation.jkr_tools.config import (
     damped_frictional_material_config,
@@ -98,6 +100,26 @@ class CanonicalCaseAssetTests(unittest.TestCase):
                     (source / name).read_bytes(),
                     (output / name).read_bytes(),
                 )
+
+    def test_standard_approach_cases_use_five_percent_radius_gap(self):
+        numerical = default_numerical_config()
+        for case in canonical_contact_cases():
+            if case.category == "restart":
+                continue
+            material = material_config(case.material_profile)
+            expected_gap = (
+                numerical.normal_initial_gap_fraction
+                * material.particle_radius
+            )
+            with self.subTest(case=case.name):
+                if case.wall_contact:
+                    self.assertAlmostEqual(
+                        wall_gap(case.particles[0]), expected_gap
+                    )
+                else:
+                    overlaps = pair_overlaps(case.particles)
+                    self.assertEqual(len(overlaps), 1)
+                    self.assertAlmostEqual(overlaps[0], -expected_gap)
 
 
 if __name__ == "__main__":

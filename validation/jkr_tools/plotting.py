@@ -175,21 +175,15 @@ def plot_contact_validation(
     axis.legend()
     save(figure, "angular_velocity_time")
 
-    mfix_active = tuple(
-        row for row in mfix_rows if row.get("active")
-    )
-    reference_active = tuple(
-        row for row in reference_rows if row.get("active")
-    )
     figure, axis = plt.subplots(figsize=(6.6, 4.2))
     axis.plot(
-        [float(row["overlap"]) for row in mfix_active],
-        [float(row["observed_normal_force"]) for row in mfix_active],
+        [float(row["overlap"]) for row in mfix_rows],
+        [float(row["observed_normal_force"]) for row in mfix_rows],
         label="MFIX26",
     )
     axis.plot(
-        [float(row["overlap"]) for row in reference_active],
-        [float(row["normal_force"]) for row in reference_active],
+        [float(row["overlap"]) for row in reference_rows],
+        [float(row["normal_force"]) for row in reference_rows],
         "--",
         label="Python JKR reference",
     )
@@ -198,21 +192,25 @@ def plot_contact_validation(
     axis.legend()
     save(figure, "normal_force_overlap")
 
-    mfix_radius = tuple(
-        row for row in mfix_rows if row.get("contact_radius") is not None
-    )
-    reference_radius = tuple(
-        row for row in reference_rows if row.get("contact_radius") is not None
-    )
     figure, axis = plt.subplots(figsize=(6.6, 4.2))
     axis.plot(
-        [float(row["time"]) for row in mfix_radius],
-        [float(row["contact_radius"]) for row in mfix_radius],
+        [float(row["time"]) for row in mfix_rows],
+        [
+            0.0
+            if row.get("contact_radius") is None
+            else float(row["contact_radius"])
+            for row in mfix_rows
+        ],
         label="MFIX26 overlap-inferred",
     )
     axis.plot(
-        [float(row["time"]) for row in reference_radius],
-        [float(row["contact_radius"]) for row in reference_radius],
+        [float(row["time"]) for row in reference_rows],
+        [
+            0.0
+            if row.get("contact_radius") is None
+            else float(row["contact_radius"])
+            for row in reference_rows
+        ],
         "--",
         label="Python JKR reference",
     )

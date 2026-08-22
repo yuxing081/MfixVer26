@@ -5,7 +5,10 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from validation.jkr_tools.config import elastic_jkr_material_config
+from validation.jkr_tools.config import (
+    default_numerical_config,
+    elastic_jkr_material_config,
+)
 from validation.jkr_tools.plotting import plot_contact_validation
 from validation.jkr_tools.reference import (
     adhesion_only_critical_speed,
@@ -17,20 +20,24 @@ from validation.run_validation import normal_contact_parameters
 class ElasticReferenceTrajectoryTests(unittest.TestCase):
     def test_adhesion_only_threshold_brackets_capture_and_rebound(self):
         material = elastic_jkr_material_config()
+        initial_overlap = -(
+            default_numerical_config().normal_initial_gap_fraction
+            * material.particle_radius
+        )
         for wall_contact in (True, False):
             parameters = normal_contact_parameters(material, wall_contact)
             critical_speed = adhesion_only_critical_speed(parameters)
             with self.subTest(contact="wall" if wall_contact else "pair"):
                 capture = simulate_normal_contact(
                     (0.0, 2.0e-6),
-                    -0.2e-6,
+                    initial_overlap,
                     0.95 * critical_speed,
                     parameters,
                     2.0e-11,
                 )
                 rebound = simulate_normal_contact(
                     (0.0, 2.0e-6),
-                    -0.2e-6,
+                    initial_overlap,
                     1.05 * critical_speed,
                     parameters,
                     2.0e-11,

@@ -416,20 +416,30 @@ def normal_jkr_cases(
     material: MaterialConfig,
 ) -> tuple[CaseConfig, ...]:
     wall_speed, pair_speed = critical_speeds(material)
+    initial_gap_fraction = (
+        default_numerical_config().normal_initial_gap_fraction
+    )
     if material.normal_restitution == 1.0:
         return elastic_jkr_normal_case_configs(
-            material, wall_speed, pair_speed
+            material, wall_speed, pair_speed, initial_gap_fraction
         )
-    return damped_jkr_normal_case_configs(material, wall_speed, pair_speed)
+    return damped_jkr_normal_case_configs(
+        material, wall_speed, pair_speed, initial_gap_fraction
+    )
 
 
 def hertz_validation_cases() -> tuple[CaseConfig, ...]:
     damped = damped_frictional_material_config()
     elastic = elastic_jkr_material_config()
     wall_speed, pair_speed = critical_speeds(elastic)
+    initial_gap_fraction = (
+        default_numerical_config().normal_initial_gap_fraction
+    )
     return (
-        *hertz_case_configs(damped),
-        *elastic_hertz_case_configs(elastic, wall_speed, pair_speed),
+        *hertz_case_configs(damped, initial_gap_fraction),
+        *elastic_hertz_case_configs(
+            elastic, wall_speed, pair_speed, initial_gap_fraction
+        ),
     )
 
 
