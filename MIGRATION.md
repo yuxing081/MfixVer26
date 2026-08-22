@@ -197,3 +197,21 @@ Restart 待办：26.1.2 read_res0_des.f 在 restart 中的 DES_USR_VAR 数量大
 | 2026-08-22 | `pair_oblique_stick` | 通过 smoke | 末态存在切向速度与约 `2.5367e5 rad/s` 对称自旋，证明切向/滚动路径被激活；PFT/PFR 数值仍需 validation-only 双精度快照 |
 
 本模块的 smoke test 只证明执行路径和宏观响应；它不替代后续力–重叠、接触半径、PFT/PFR、contact state 和解析拉脱力的定量回归。
+
+## 第三阶段模块 4：球形颗粒–墙面 JKR 与墙历史
+
+日期：2026-08-22。
+
+- 基于 26.1.2 的 STL facet 搜索、法向构造和力/力矩累加接口实现球形墙面 JKR；未进入 SuperDEM 或 glued-sphere 路径。
+- JKR 候选范围扩展到 `delta_c`，实际拉伸截止使用 `JKR_ALPHA_SAFETY*delta_c`；正重叠建立墙颈部，负重叠只延续已有 facet-slot state。
+- 墙面 PFT 保留官方切向历史算法；新增 Chen PFR、临界滚动位移和 `NORMAL x PFR` 滚动力矩。
+- facet slot 的新建、陈旧 slot 复用、显式移除、无邻近 facet 和动态扩容均同步初始化或清除 facet ID、PFT、PFR 和 wall JKR state，防止历史串槽。
+
+| 日期 | 工况 | 结果 | 证据/边界 |
+| --- | --- | --- | --- |
+| 2026-08-22 | 模块 4 串行编译 | 通过 | MFIX 26.1.2、GNU Fortran 15.3.0；`git diff --check` 通过 |
+| 2026-08-22 | 官方 26.1.2 vs 自定义 solver 墙面 Hertz | 逐字节一致 | 两份 `particle_output.csv` SHA-256 均为 `b560bb90ef4221b2c0799a64a59b0e0a4f83a33c295507c774d8391158284bc9` |
+| 2026-08-22 | `wall_normal_capture` | 通过 smoke | 单粒子完成 1 us，末态中心–墙间隙约 3.70 nm，处于负重叠颈部范围；无 Newton 警告 |
+| 2026-08-22 | `wall_oblique_stick` | 通过 smoke | 完成 0.6 us，末态切向速度约 0.7793 m/s、自旋约 -7.835e5 rad/s；切向/滚动路径激活 |
+
+墙面 restart、DMP owner migration 和双精度 wall facet/PFT/PFR/state 快照尚未完成，因此本模块只提交串行生产物理与内存生命周期。
