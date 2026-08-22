@@ -268,6 +268,10 @@ CONTAINS
       Allocate(  wall_collision_facet_id (COLLISION_ARRAY_MAX, MAX_PIP) )
       wall_collision_facet_id(:,:) = -1
       Allocate(  wall_collision_PFT (DIMN, COLLISION_ARRAY_MAX, MAX_PIP) )
+      Allocate(  wall_collision_PFR (DIMN, COLLISION_ARRAY_MAX, MAX_PIP) )
+      wall_collision_PFR = ZERO
+      Allocate(  JKR_WALL_CONTACT_STATE (COLLISION_ARRAY_MAX, MAX_PIP) )
+      JKR_WALL_CONTACT_STATE = .FALSE.
 
 ! Temporary variables to store wall position, velocity and normal vector
       Allocate(  WALL_NORMAL  (NWALLS,DIMN) )
@@ -280,6 +284,14 @@ CONTAINS
       Allocate(  NEIGHBORS_OLD (MAX_PIP) )
       Allocate(  PFT_NEIGHBOR (3,MAX_PIP) )
       Allocate(  PFT_NEIGHBOR_OLD (3,MAX_PIP) )
+      Allocate(  PFR_NEIGHBOR (3,MAX_PIP) )
+      PFR_NEIGHBOR = ZERO
+      Allocate(  PFR_NEIGHBOR_OLD (3,MAX_PIP) )
+      PFR_NEIGHBOR_OLD = ZERO
+      Allocate(  JKR_CONTACT_STATE (MAX_PIP) )
+      JKR_CONTACT_STATE = .FALSE.
+      Allocate(  JKR_CONTACT_STATE_OLD (MAX_PIP) )
+      JKR_CONTACT_STATE_OLD = .FALSE.
 
 ! superquadric model, to store contact points in global coordinates
       IF(SuperDEM)  THEN
@@ -602,6 +614,7 @@ CONTAINS
         INTEGER :: lSIZE1
         INTEGER, DIMENSION(:), ALLOCATABLE :: neigh_tmp
         DOUBLE PRECISION, DIMENSION(:,:), ALLOCATABLE :: pf_tmp
+        LOGICAL, DIMENSION(:), ALLOCATABLE :: jkr_tmp
         DOUBLE PRECISION, DIMENSION(:,:), ALLOCATABLE :: contact_point_a_tmp
         DOUBLE PRECISION, DIMENSION(:,:), ALLOCATABLE :: contact_point_b_tmp
         DOUBLE PRECISION, DIMENSION(:), ALLOCATABLE :: contact_lambda_a_tmp
@@ -638,6 +651,26 @@ CONTAINS
         pf_tmp(:,1:lSIZE1) = pft_neighbor_old(:,1:lSIZE1)
         pf_tmp(:,lSIZE1+1:) = 0
         call move_alloc(pf_tmp,pft_neighbor_old)
+
+        allocate(pf_tmp(3,new_size))
+        pf_tmp(:,1:lSIZE1) = pfr_neighbor(:,1:lSIZE1)
+        pf_tmp(:,lSIZE1+1:) = 0
+        call move_alloc(pf_tmp,pfr_neighbor)
+
+        allocate(pf_tmp(3,new_size))
+        pf_tmp(:,1:lSIZE1) = pfr_neighbor_old(:,1:lSIZE1)
+        pf_tmp(:,lSIZE1+1:) = 0
+        call move_alloc(pf_tmp,pfr_neighbor_old)
+
+        allocate(jkr_tmp(new_size))
+        jkr_tmp(1:lSIZE1) = jkr_contact_state(1:lSIZE1)
+        jkr_tmp(lSIZE1+1:) = .FALSE.
+        call move_alloc(jkr_tmp,jkr_contact_state)
+
+        allocate(jkr_tmp(new_size))
+        jkr_tmp(1:lSIZE1) = jkr_contact_state_old(1:lSIZE1)
+        jkr_tmp(lSIZE1+1:) = .FALSE.
+        call move_alloc(jkr_tmp,jkr_contact_state_old)
 ! SupderDEM
         if (SuperDEM) then
            allocate(contact_point_A_tmp(3,new_size))
@@ -719,6 +752,8 @@ CONTAINS
         integer, intent(in) :: new_max_pip
         integer :: old_size, new_size
         integer :: redundant
+        integer :: lsz1, lsz2
+        logical, allocatable :: jkrw_tmp(:,:)
 
         max_pip = max(max_pip, new_max_pip)
         IF (new_max_pip .le. size(des_radius)) RETURN
@@ -863,6 +898,14 @@ CONTAINS
         call real_grow(F_GP,new_size)
         call integer_grow2(WALL_COLLISION_FACET_ID,new_size)
         call real_grow3(WALL_COLLISION_PFT,new_size)
+        call real_grow3(WALL_COLLISION_PFR,new_size)
+        WALL_COLLISION_PFR(:,:,old_size+1:new_size) = ZERO
+        lsz1 = size(JKR_WALL_CONTACT_STATE,1)
+        lsz2 = size(JKR_WALL_CONTACT_STATE,2)
+        allocate(jkrw_tmp(lsz1,new_size))
+        jkrw_tmp(:,1:lsz2) = JKR_WALL_CONTACT_STATE(:,1:lsz2)
+        jkrw_tmp(:,lsz2+1:) = .FALSE.
+        call move_alloc(jkrw_tmp,JKR_WALL_CONTACT_STATE)
         call real_grow2_reverse(DRAG_FC,new_size)
 
         call integer_grow(NEIGHBOR_INDEX,new_size)

@@ -241,6 +241,8 @@ SUBROUTINE SWAP_PARTICLE_DATA(i,j)
      dmax_1 = size(WALL_COLLISION_FACET_ID,1)
      do d1=1,dmax_1
         call DES_SWAPVALUES(WALL_COLLISION_FACET_ID(d1,i),WALL_COLLISION_FACET_ID(d1,j))
+        call DES_SWAPVALUES(JKR_WALL_CONTACT_STATE(d1,i), &
+           JKR_WALL_CONTACT_STATE(d1,j))
      enddo
      dmax_1 = size(WALL_COLLISION_PFT,1)
      dmax_2 = size(WALL_COLLISION_PFT,2)
@@ -248,6 +250,8 @@ SUBROUTINE SWAP_PARTICLE_DATA(i,j)
      do d2=1,dmax_2
   do d1=1,dmax_1
             call  DES_SWAPVALUES(WALL_COLLISION_PFT(d1,d2,i),WALL_COLLISION_PFT(d1,d2,j))
+            call DES_SWAPVALUES(WALL_COLLISION_PFR(d1,d2,i), &
+               WALL_COLLISION_PFR(d1,d2,j))
   enddo
      enddo
 

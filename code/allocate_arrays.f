@@ -2045,6 +2045,8 @@ CONTAINS
       if(allocated(wall_collision_facet_id)) deallocate(wall_collision_facet_id)
 
       if(allocated(wall_collision_PFT)) deallocate(wall_collision_PFT)
+      if(allocated(wall_collision_PFR)) deallocate(wall_collision_PFR)
+      if(allocated(JKR_WALL_CONTACT_STATE)) deallocate(JKR_WALL_CONTACT_STATE)
 
 ! Temporary variables to store wall position, velocity and normal vector
       if(allocated(WALL_NORMAL)) deallocate(WALL_NORMAL)
@@ -2056,6 +2058,10 @@ CONTAINS
       if(allocated(NEIGHBORS_OLD)) deallocate(NEIGHBORS_OLD)
       if(allocated(PFT_NEIGHBOR)) deallocate(PFT_NEIGHBOR)
       if(allocated(PFT_NEIGHBOR_OLD)) deallocate(PFT_NEIGHBOR_OLD)
+      if(allocated(PFR_NEIGHBOR)) deallocate(PFR_NEIGHBOR)
+      if(allocated(PFR_NEIGHBOR_OLD)) deallocate(PFR_NEIGHBOR_OLD)
+      if(allocated(JKR_CONTACT_STATE)) deallocate(JKR_CONTACT_STATE)
+      if(allocated(JKR_CONTACT_STATE_OLD)) deallocate(JKR_CONTACT_STATE_OLD)
 
 ! SuperDEM, contact points on a pair of particles
       if(SuperDEM)  then

@@ -148,3 +148,19 @@ model/read_namelist.f 暂不复制；read_res1_des_mod.f 和 write_res1_des_mod.
 - 创建 README.md 和 .gitignore；大型结果、solver/build、MFIX 输出、Python 缓存和临时比较文件均不进入 Git。
 - code/ 的 16 个文件均直接复制自本地 model/，SHA-256 与官方来源一致。
 - 本阶段已成功编译串行官方内容覆盖基线；没有运行工况或修改 Fortran，因此没有新的物理或 restart 通过结论。
+
+## 第三阶段模块 1：参数与历史数据生命周期
+
+日期：2026-08-22。以下状态取代上文第二阶段的“16 个文件均未修改”基线描述。
+
+- 新增 JKR namelist：USE_JKR、颗粒/墙面表面能、颗粒/墙面临界滚动角和拉伸截止安全系数；USE_JKR 默认关闭。
+- JKR 仅支持普通球形 Hertzian DEM。与 USE_COHESION、LSD、SuperDEM 或 glued-sphere 组合时启动报错。
+- 新增 pair PFR、pair JKR contact state、wall PFR 和 wall JKR contact state；已覆盖 allocate、neighbor grow、particle grow、new-particle initialization、particle swap 和 deallocate。
+- 新增官方 des_init_arrays.f 项目副本，仅扩展墙历史初始化；新增官方 read_namelist.f 项目副本，使其优先包含 code/desnamelist.inc。环境中的官方源码未修改。
+- 本模块只建立输入、校验和状态存储，不宣称 JKR 法向力、滚动力矩、邻居重建、DMP 或 restart 已完成。
+
+| 2026-08-22 | 模块 1 串行编译 | 通过 | MFIX 26.1.2、GNU Fortran 15.3.0、CMake 4.2.3；17 个 Fortran UDF + desnamelist.inc 被采用 |
+| 2026-08-22 | USE_JKR=.FALSE. 两球 Hertz 短时 smoke | 通过 | 2 粒子完成初始化并推进；旧 VTK_PART_COL_FORCE 在 26.1.2 中已删除，测试副本移除后通过 |
+| 2026-08-22 | USE_JKR=.TRUE. 关键词/分配 smoke | 通过 | 新关键词被解析，新增数组完成初始化并运行；此结果不作为 JKR 力学验证 |
+
+下一提交将按 MFIX 26.1.2 的 Hertz 归一化契约实现逐颗粒表面能和异质接触派生参数；不会直接复制 23.4.1 的派生系数块。

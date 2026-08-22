@@ -480,6 +480,25 @@ CONTAINS
       ENDIF
 
 ! Check collision model specific parameters.
+
+! JKR is implemented only for ordinary spherical Hertzian DEM particles.
+      IF(USE_JKR .AND. USE_COHESION) THEN
+         WRITE(ERR_MSG,'(A)') &
+            'USE_JKR and USE_COHESION cannot both be enabled.'
+         CALL LOG_ERROR()
+      ENDIF
+
+      IF(USE_JKR .AND. TRIM(DES_COLL_MODEL) /= 'HERTZIAN') THEN
+         WRITE(ERR_MSG,'(A)') &
+            'USE_JKR requires DES_COLL_MODEL = "HERTZIAN".'
+         CALL LOG_ERROR()
+      ENDIF
+
+      IF(USE_JKR .AND. (SuperDEM .OR. GSP_EXPLICIT .OR. GSP_IMPLICIT)) THEN
+         WRITE(ERR_MSG,'(A)') 'USE_JKR supports spherical DEM only.'
+         CALL LOG_ERROR()
+      ENDIF
+
       SELECT CASE (trim(DES_COLL_MODEL))
 ! Linear spring-dashpot model.
       CASE('LSD')
@@ -882,6 +901,51 @@ CONTAINS
       TCOLL = UNDEFINED
       TBOND = UNDEFINED
       TMP_DTSOLID = 1000000.0
+
+      IF(USE_JKR) THEN
+         IF(DES_SURFACE_ENERGY_WALL == UNDEFINED) THEN
+            WRITE(ERR_MSG,1000) 'DES_SURFACE_ENERGY_WALL'
+            CALL LOG_ERROR()
+         ELSEIF(DES_SURFACE_ENERGY_WALL < ZERO .OR. &
+            DES_SURFACE_ENERGY_WALL > 5.0D0 .OR. &
+            (DES_SURFACE_ENERGY_WALL > ZERO .AND. &
+             DES_SURFACE_ENERGY_WALL < 1.0D-4)) THEN
+            WRITE(ERR_MSG,1001) 'DES_SURFACE_ENERGY_WALL', &
+               iVal(DES_SURFACE_ENERGY_WALL)
+            CALL LOG_ERROR()
+         ENDIF
+
+         DO M=1,DES_MMAX
+            IF(DES_SURFACE_ENERGY(M) == UNDEFINED) THEN
+               WRITE(ERR_MSG,1000) 'DES_SURFACE_ENERGY'
+               CALL LOG_ERROR()
+            ELSEIF(DES_SURFACE_ENERGY(M) < ZERO .OR. &
+               DES_SURFACE_ENERGY(M) > 5.0D0 .OR. &
+               (DES_SURFACE_ENERGY(M) > ZERO .AND. &
+                DES_SURFACE_ENERGY(M) < 1.0D-4)) THEN
+               WRITE(ERR_MSG,1001) 'DES_SURFACE_ENERGY', &
+                  iVal(DES_SURFACE_ENERGY(M))
+               CALL LOG_ERROR()
+            ENDIF
+         ENDDO
+
+         IF(JKR_THETAR_CRIT < 1.0D-4 .OR. &
+            JKR_THETAR_CRIT > 1.0D-1) THEN
+            WRITE(ERR_MSG,1001) 'JKR_THETAR_CRIT', iVal(JKR_THETAR_CRIT)
+            CALL LOG_ERROR()
+         ENDIF
+         IF(WALL_JKR_THETAR_CRIT < 1.0D-4 .OR. &
+            WALL_JKR_THETAR_CRIT > 1.0D-1) THEN
+            WRITE(ERR_MSG,1001) 'WALL_JKR_THETAR_CRIT', &
+               iVal(WALL_JKR_THETAR_CRIT)
+            CALL LOG_ERROR()
+         ENDIF
+         IF(JKR_ALPHA_SAFETY < 0.7D0 .OR. JKR_ALPHA_SAFETY > ONE) THEN
+            WRITE(ERR_MSG,1001) 'JKR_ALPHA_SAFETY', iVal(JKR_ALPHA_SAFETY)
+            CALL LOG_ERROR()
+         ENDIF
+      ENDIF
+
 
 ! check young's modulus and poisson ratio
       IF(Ew_YOUNG == UNDEFINED ) THEN

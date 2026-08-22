@@ -1491,6 +1491,48 @@ CONTAINS
 !  <dependent keyword="USE_COHESION" value=".TRUE."/>
       Asperities = ZERO
 !</keyword>
+!<keyword dtype="LOGICAL" category="Discrete Element Model" required="false" locked="true">
+!  <description>Enable spherical-particle JKR adhesion and Chen rolling.</description>
+!  <conflict keyword="USE_COHESION" value=".TRUE."/>
+      USE_JKR = .FALSE.
+!</keyword>
+
+!<keyword dtype="REAL" category="Discrete Element Model" required="false" locked="true">
+!  <description>Per-phase particle surface energy used by JKR.</description>
+!  <dependent keyword="USE_JKR" value=".TRUE."/>
+!  <arg index="1" id="Phase" min="1" max="MMAX"/>
+!  <range min="0.0" max="5.0"/>
+      DES_SURFACE_ENERGY(:) = UNDEFINED
+!</keyword>
+
+!<keyword dtype="REAL" category="Discrete Element Model" required="false" locked="true">
+!  <description>Wall surface energy used by JKR.</description>
+!  <dependent keyword="USE_JKR" value=".TRUE."/>
+!  <range min="0.0" max="5.0"/>
+      DES_SURFACE_ENERGY_WALL = UNDEFINED
+!</keyword>
+
+!<keyword dtype="REAL" category="Discrete Element Model" required="false" locked="true">
+!  <description>Critical Chen rolling angle for particle pairs.</description>
+!  <dependent keyword="USE_JKR" value=".TRUE."/>
+!  <range min="1.0e-4" max="1.0e-1"/>
+      JKR_THETAR_CRIT = 1.0d-2
+!</keyword>
+
+!<keyword dtype="REAL" category="Discrete Element Model" required="false" locked="true">
+!  <description>Critical Chen rolling angle for particle-wall contacts.</description>
+!  <dependent keyword="USE_JKR" value=".TRUE."/>
+!  <range min="1.0e-4" max="1.0e-1"/>
+      WALL_JKR_THETAR_CRIT = 1.0d-2
+!</keyword>
+
+!<keyword dtype="REAL" category="Discrete Element Model" required="false" locked="true">
+!  <description>Safety factor applied to the tensile JKR cutoff.</description>
+!  <dependent keyword="USE_JKR" value=".TRUE."/>
+!  <range min="0.7" max="1.0"/>
+      JKR_ALPHA_SAFETY = 1.0d0
+!</keyword>
+
 
 
 !<keyword dtype="CHARACTER" category="Discrete Element Model" required="false" locked="true">

@@ -47,6 +47,12 @@
         VDW_INNER_CUTOFF, VDW_OUTER_CUTOFF, ASPERITIES, &
         WALL_VDW_INNER_CUTOFF, WALL_VDW_OUTER_CUTOFF,&
 
+! JKR adhesive DEM model (spherical particles only)
+        USE_JKR, DES_SURFACE_ENERGY, DES_SURFACE_ENERGY_WALL, &
+        JKR_THETAR_CRIT, WALL_JKR_THETAR_CRIT, &
+        JKR_ALPHA_SAFETY, &
+
+
 ! DES Energy Equations: J.Musser
         DES_CONV_CORR, FLPC, DES_Em, DES_MIN_COND_DIST, &
 
