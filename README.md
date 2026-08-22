@@ -21,11 +21,15 @@
 ## 目录
 
 - code/：相对于 MFIX 26.1.2 修改的生产 Fortran 源码；不放验证 seed 或 case 专用诊断。
-- validation/cases/：两颗粒、墙面、restart、DMP 和最终团聚体工况；case 专用 DES_USR_VAR 诊断放在对应 case 内。
-- validation/analysis/：比较器、双精度边界快照读取和可选能量审计。
-- validation/results/：可重新生成的大型输出，默认不进入 Git。
-- MIGRATION.md：逐文件迁移决定、restart 格式、测试结果、限制和待办。
+- validation/cases/：按 particle_wall、particle_pair、wall_geometry、dmp 和 restart 分类；输入由集中配置在运行时生成。
+- validation/jkr_tools/：配置、case 生成、独立理论参考、I/O、比较和绘图工具。
+- validation/tests/：不依赖 solver 的单元测试。
+- validation/results/：每次运行的独立时间戳目录；大型输出默认不进入 Git。
+- docs/VALIDATION.md：正式验证设计、执行结果和限制文档。
+- docs/MIGRATION.md：生产源码的逐文件迁移决定与实现记录。
 - model/：当前已有的 MFIX 26.1.2 官方只读快照，不纳入本仓库版本控制。
+
+旧版 `versions/test` 只用于审查测试过程和公式来源，不复制 MFIX 23 结果作为理论真值。
 
 ## 编译环境
 
@@ -51,36 +55,27 @@ build/、solver、模块文件和运行输出均被 Git 忽略。不要在 conda
 
 ## 最小运行与测试
 
-运行固化的异径两球 PFT/PFR/JKR state restart 回归：
+验证只有一个 shell 入口；Python 运行器负责生成输入、创建独立结果目录、记录 Git/solver/编译器/参数元数据，并在任一必需测试失败时返回非零退出码：
 
     cd /home/yuxing/mfix/MfixVer26
-    validation/cases/restart_pair_pfr/run_restart_pair_pfr.sh code/build/mfixsolve
+    ./validation/run_validation.sh unit
+    ./validation/run_validation.sh restart
+    ./validation/run_validation.sh all
 
-脚本在 `validation/results/restart_pair_pfr/` 生成三条分支并比较双精度 `particle_output.csv`：
+当前已接入 `unit` 与串行 `restart`；其余物理、速度、几何和 DMP 套件按 `docs/VALIDATION.md` 的矩阵逐阶段接入，未运行项目不会标记为通过。
 
-墙面 PFT/PFR/state 回归使用：
+restart 套件对两颗粒和斜碰墙面分别运行：
 
+1. continuous；
+2. split stage + RESTART_1；
+3. split stage + RESTART_2 敏感性负对照。
 
-- continuous；
-- 5 ns + RESTART_1；
-- 5 ns + RESTART_2 敏感性对照。
+RESTART_1 必须与 continuous 的双精度 `particle_output.csv` 逐字节一致。RESTART_2 是否不同单独记录，不作为正向通过条件。结果写入 `validation/results/runs/<UTC时间戳>-<pid>/`，永不复用固定目录。
 
-两进程运行的基本命令为：
-
-    mpirun -np 2 /home/yuxing/mfix/MfixVer26/code/build_dmp/mfixsolver_dmp -f mfix.dat
-
-截至 2026-08-22，串行 pair/wall JKR、异质表面能、PFT/PFR/state RESTART_1、DMP owner migration 和 coarse-grid 新接触已通过。DMP 首次邻居重建已直接恢复非零 PFT/PFR/state；但 continuous 与 DMP RESTART_1 的末态仍非逐字节一致，且 `USE_JKR=.FALSE.` 的 MFIX 26.1.2 官方 1.2 DMP restart 也存在基线差异。该项在 MIGRATION.md 中保持“暂缓/未验收”，不能由编译或运行完成替代。
-
-验证顺序固定为：
-
-1. 原生 26.1.2 与 USE_JKR=.FALSE. 自定义 solver 对照。
-2. 串行两颗粒和墙面单接触。
-3. PFT/PFR/JKR state 的 RESTART_1 回归，RESTART_2 仅作敏感性对照。
-4. 固定两进程 DMP owner migration 和 restart。
-5. 小规模团聚体集成测试。
+完整测试顺序保持为原生 Hertz 保护、串行墙面/颗粒对、速度扫描、壁面几何、2-rank DMP、RESTART_1 和小颗粒群集成测试。正式结果写入 `docs/VALIDATION.md`，活动进度写入 `docs/TEST_PROGRESS.md`。
 
 ## 生产代码与验证代码边界
 
 生产 code/ 保留 JKR 力学、PFT/PFR、JKR contact state、逐颗粒表面能、邻居/DMP/restart 生命周期所必需的逻辑。新增历史仿照 MFIX 官方 PFT 的保存、全局 ID 映射和恢复流程。
 
-能量统计、DES_USR_VAR(2:31)、人工 PFR seed、ghost/slot/force 导出和双精度边界快照只允许存在于 validation 的具体 case、analysis 工具或显式验证 patch 中，不得无条件进入生产力计算。
+能量统计、DES_USR_VAR(2:31)、人工 PFR seed、ghost/slot/force 导出和双精度边界快照只允许存在于 validation 的具体 case、jkr_tools 或显式验证 patch 中，不得无条件进入生产力计算。
