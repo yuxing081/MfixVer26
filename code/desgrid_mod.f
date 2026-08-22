@@ -1112,10 +1112,11 @@ MODULE DESGRID
          ku_off = 1
 
          lcurpar_pos(:) = des_pos_new(lcurpar,:)
-!   The desgrid size should not be less than 2*dia*rlm_factor
-         IS_COARSE_DG_X = 1 > 2*MAX_RADIUS*FACTOR_RLM*DG_DXINV
-         IS_COARSE_DG_Y = 1 > 2*MAX_RADIUS*FACTOR_RLM*DG_DYINV
-         IS_COARSE_DG_Z = 1 > 2*MAX_RADIUS*FACTOR_RLM*DG_DZINV
+! A half-cell can be skipped only when W/2 exceeds the maximum search
+! radius, 2*MAX_RADIUS*FACTOR_RLM.
+         IS_COARSE_DG_X = 1 > 4*MAX_RADIUS*FACTOR_RLM*DG_DXINV
+         IS_COARSE_DG_Y = 1 > 4*MAX_RADIUS*FACTOR_RLM*DG_DYINV
+         IS_COARSE_DG_Z = 1 > 4*MAX_RADIUS*FACTOR_RLM*DG_DZINV
 
          if (IS_COARSE_DG_X) then
             lcur_off = (lcurpar_pos(1)-dg_xstart)*dg_dxinv - &

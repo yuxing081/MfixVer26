@@ -273,3 +273,20 @@ Restart 待办：26.1.2 read_res0_des.f 在 restart 中的 DES_USR_VAR 数量大
 | 2026-08-22 | 串行写入、2-rank 读取 | 暂未通过 | 可完成但与串行 continuous 有可见偏差；不同分解兼容不列入当前通过项 |
 
 串行 RESTART_1 已覆盖 PFT、非零 PFR、pair neck state 和墙面历史；DMP restart 仍是验收阻塞项，不因运行完成而标记通过。
+
+## 第三阶段模块 8：粗网格邻居搜索修正与 DMP restart 基线
+
+日期：2026-08-22。
+
+- MFIX 26.1.2 官方 `desgrid_mod.f` 的 half-cell coarse 判据仍使用 `2*MAX_RADIUS*FACTOR_RLM`。旧 JKR 修改的意图是比较半个网格宽度与最大搜索半径，因此在 26.1.2 邻居框架上语义重写为系数 4；没有复制旧文件或改变新版其余 DES grid/DMP 过滤逻辑。
+- 粗网格新接触工况在串行与固定两进程 DMP 下均形成一个激活的 JKR contact state，最终 4 个颗粒的 X/Y/Z/U/V/W 双精度 CSV 逐项差值为 0；该工况为法向接触，PFT/PFR 预期为零。
+- DMP RESTART_1 首次邻居重建后的 validation-only 快照直接观察到拥有接触对的 rank：`NEIGH_NUM=1`、PFT=`8.2190147440577080e-10 m`、PFR=0、state count=1。临时输出已从生产源码撤除；非零 PFR 的逐字段 restart 证据目前只在串行异径工况通过。
+- 固定两进程 `USE_JKR=.FALSE.` 官方 1.2 restart 基线本身也不是 continuous 逐字节一致：末态最大差 X=`7.9490e-11 m`、Y=`1.3461e-13 m`、U=`2.5411e-4 m/s`、V=`2.7856e-6 m/s`，日志无错误。因此模块 7 中 JKR DMP restart 的非零末态差异不能全部归因于新增历史，但仍未达到本项目 DMP restart 验收标准。
+
+| 日期 | 工况 | 结果 | 证据/边界 |
+| --- | --- | --- | --- |
+| 2026-08-22 | `pair_new_contact_coarse_dmp`，1 rank vs 2 ranks | 通过 | 均退出 0；4 粒子末态 X/Y/Z/U/V/W 最大差均为 0；形成 1 个 JKR 接触 |
+| 2026-08-22 | 2-rank JKR RESTART_1 首邻居重建 | 部分通过 | 非零 PFT 与 state 恢复；本工况 PFR 为零，尚缺 DMP 非零 PFR 直接证据 |
+| 2026-08-22 | 2-rank Hertz 官方 1.2 continuous vs RESTART_1 | 基线非零差异 | 无运行错误；用于隔离 MFIX 26.1.2 官方 DMP restart 重排误差，不作为 JKR 通过结论 |
+
+跨 rank 单侧 pair 过滤策略尚未被独立证明在所有 owner 迁移方向都正确；后续仍需用非零 PFT/PFR 的跨分区接触逐断点检查，不能由本模块的法向 coarse case 替代。
