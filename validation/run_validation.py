@@ -16,15 +16,24 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from validation.jkr_tools.case_generation import write_case_files
+from validation.jkr_tools.case_generation import (
+    case_contact_time,
+    copy_canonical_case_asset,
+    write_case_files,
+)
 from validation.jkr_tools.config import (
     CaseConfig,
     MaterialConfig,
     comparison_tolerances,
-    hertz_case_configs,
+    damped_frictional_material_config,
+    damped_jkr_normal_case_configs,
     default_material_config,
     default_numerical_config,
-    jkr_normal_case_configs,
+    elastic_hertz_case_configs,
+    elastic_jkr_material_config,
+    elastic_jkr_normal_case_configs,
+    hertz_case_configs,
+    material_config,
     restart_case_configs,
 )
 from validation.jkr_tools.hertz import (
@@ -37,11 +46,14 @@ from validation.jkr_tools.reference import (
     adhesion_only_critical_speed,
     contact_parameters,
     jkr_key_points,
+    simulate_normal_contact,
 )
+from validation.jkr_tools.plotting import plot_contact_validation
 
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+CASES_ROOT = PROJECT_ROOT / "validation" / "cases"
 DEFAULT_SOLVER = PROJECT_ROOT / "code" / "build" / "mfixsolver"
 DEFAULT_NATIVE_WRAPPER = Path("/home/yuxing/miniforge3/envs/mfix-26.1.2/bin/mfixsolver")
 DEFAULT_NATIVE_MODULE = Path("/home/yuxing/miniforge3/envs/mfix-26.1.2/bin/mfixsolver.so")
@@ -268,23 +280,18 @@ def run_hertz_case(
     run_directory: Path,
     metadata: dict[str, Any],
 ) -> dict[str, Any]:
-    material = default_material_config()
+    material = material_config(case.material_profile)
     numerical = default_numerical_config()
     case_root = run_directory / case.name
     official_directory = case_root / "official"
     migrated_directory = case_root / "migrated"
-    run_name = f"R26_{case.name.upper()}"
     for directory in (official_directory, migrated_directory):
-        write_case_files(
-            output_directory=directory,
-            case=case,
-            material=material,
-            numerical=numerical,
-            run_name=run_name,
-            run_type="new",
-            stop_time=case.stop_time,
-            partition=numerical.serial_partition,
-            include_jkr_keywords=False,
+        copy_canonical_case_asset(
+            CASES_ROOT,
+            directory,
+            case,
+            material,
+            numerical,
         )
     write_case_metadata(case_root / "metadata.json", {
         **metadata,
@@ -294,6 +301,8 @@ def run_hertz_case(
             "module": str(native_module),
             "module_sha256": file_sha256(native_module),
         },
+        "material_profile": case.material_profile,
+        "material": dataclasses.asdict(material),
         "input_contract": "identical stock-compatible input without JKR extensions",
     }, case)
     statuses = {
@@ -348,11 +357,21 @@ def run_hertz_case(
         "migrated": migrated_metrics,
         "matches": official_metrics == migrated_metrics,
     }
+    elastic_tolerance = 5.0e-3
+    elastic_behavior_passed = (
+        case.material_profile != "elastic_jkr"
+        or (
+            not official_metrics["captured"]
+            and abs(official_metrics["effective_restitution"] - 1.0)
+            <= elastic_tolerance
+        )
+    )
     return {
         "case": case.name,
         "passed": (
             comparison["passed"]
             and trajectory_comparison["passed"]
+            and elastic_behavior_passed
             and metrics["matches"]
         ),
         "directory": str(case_root),
@@ -360,6 +379,10 @@ def run_hertz_case(
         "trajectory_comparison": trajectory_comparison,
         "contact_metrics": metrics,
         "comparison": comparison,
+        "elastic_behavior": {
+            "passed": elastic_behavior_passed,
+            "effective_restitution_tolerance": elastic_tolerance,
+        },
     }
 
 
@@ -382,15 +405,78 @@ def normal_contact_parameters(
     )
 
 
+def critical_speeds(material: MaterialConfig) -> tuple[float, float]:
+    return (
+        adhesion_only_critical_speed(normal_contact_parameters(material, True)),
+        adhesion_only_critical_speed(normal_contact_parameters(material, False)),
+    )
+
+
 def normal_jkr_cases(
     material: MaterialConfig,
 ) -> tuple[CaseConfig, ...]:
-    wall_parameters = normal_contact_parameters(material, True)
-    pair_parameters = normal_contact_parameters(material, False)
-    return jkr_normal_case_configs(
-        material,
-        adhesion_only_critical_speed(wall_parameters),
-        adhesion_only_critical_speed(pair_parameters),
+    wall_speed, pair_speed = critical_speeds(material)
+    if material.normal_restitution == 1.0:
+        return elastic_jkr_normal_case_configs(
+            material, wall_speed, pair_speed
+        )
+    return damped_jkr_normal_case_configs(material, wall_speed, pair_speed)
+
+
+def hertz_validation_cases() -> tuple[CaseConfig, ...]:
+    damped = damped_frictional_material_config()
+    elastic = elastic_jkr_material_config()
+    wall_speed, pair_speed = critical_speeds(elastic)
+    return (
+        *hertz_case_configs(damped),
+        *elastic_hertz_case_configs(elastic, wall_speed, pair_speed),
+    )
+
+
+def serial_jkr_validation_cases() -> tuple[CaseConfig, ...]:
+    return (
+        *normal_jkr_cases(elastic_jkr_material_config()),
+        *normal_jkr_cases(damped_frictional_material_config()),
+    )
+
+
+def canonical_contact_cases() -> tuple[CaseConfig, ...]:
+    return (
+        *hertz_validation_cases(),
+        *serial_jkr_validation_cases(),
+        *restart_case_configs(damped_frictional_material_config()),
+    )
+
+
+def write_rows_csv(
+    path: Path,
+    rows: tuple[dict[str, Any], ...],
+) -> None:
+    if not rows:
+        raise ValueError("cannot write an empty evidence CSV")
+    fieldnames = tuple(dict.fromkeys(
+        key for row in rows for key in row
+    ))
+    with path.open("w", newline="", encoding="utf-8") as stream:
+        writer = csv.DictWriter(stream, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def key_points_have_expected_signs(
+    parameters: ContactParameters,
+) -> bool:
+    points = {point.name: point for point in jkr_key_points(parameters)}
+    return (
+        points["critical_separation"].overlap < 0.0
+        and points["critical_separation"].normal_force < 0.0
+        and points["maximum_tension"].overlap < 0.0
+        and points["maximum_tension"].normal_force
+        == -parameters.pull_off_force_magnitude
+        and abs(points["zero_overlap"].overlap) <= 1.0e-22
+        and points["zero_overlap"].normal_force < 0.0
+        and points["zero_force_equilibrium"].overlap > 0.0
+        and abs(points["zero_force_equilibrium"].normal_force) <= 1.0e-22
     )
 
 
@@ -400,43 +486,46 @@ def run_normal_jkr_case(
     run_directory: Path,
     metadata: dict[str, Any],
 ) -> dict[str, Any]:
-    material = default_material_config()
+    material = material_config(case.material_profile)
     numerical = default_numerical_config()
     parameters = normal_contact_parameters(material, case.wall_contact)
     critical_speed = adhesion_only_critical_speed(parameters)
     expected_behavior = "capture" if case.name.endswith("capture") else "rebound"
     case_directory = run_directory / case.name
-    run_name = f"R26_{case.name.upper()}"
-    write_case_files(
-        output_directory=case_directory,
-        case=case,
-        material=material,
-        numerical=numerical,
-        run_name=run_name,
-        run_type="new",
-        stop_time=case.stop_time,
-        partition=numerical.serial_partition,
+    copy_canonical_case_asset(
+        CASES_ROOT,
+        case_directory,
+        case,
+        material,
+        numerical,
     )
     force_absolute_tolerance = 1.0e-9
     force_relative_tolerance = 2.0e-2
     rebound_velocity_tolerance = 1.0e-6
-    write_case_metadata(case_directory / "metadata.json", {
+    key_points = tuple(jkr_key_points(parameters))
+    reference_metadata = {
+        "contact_parameters": dataclasses.asdict(parameters),
+        "key_points": [dataclasses.asdict(point) for point in key_points],
+        "key_point_signs_passed": key_points_have_expected_signs(parameters),
+        "adhesion_only_critical_speed": critical_speed,
+        "impact_speed_factor": case.critical_speed_factor,
+        "expected_behavior": expected_behavior,
+    }
+    tolerance_metadata = {
+        "vtp_force_absolute": force_absolute_tolerance,
+        "vtp_force_relative": force_relative_tolerance,
+        "rebound_velocity": rebound_velocity_tolerance,
+    }
+    base_metadata = {
         **metadata,
-        "reference": {
-            "contact_parameters": dataclasses.asdict(parameters),
-            "key_points": [
-                dataclasses.asdict(point) for point in jkr_key_points(parameters)
-            ],
-            "adhesion_only_critical_speed": critical_speed,
-            "impact_speed_factor": case.contact_time_speed / critical_speed,
-            "expected_behavior": expected_behavior,
-        },
-        "tolerances": {
-            "vtp_force_absolute": force_absolute_tolerance,
-            "vtp_force_relative": force_relative_tolerance,
-            "rebound_velocity": rebound_velocity_tolerance,
-        },
-    }, case)
+        "material_profile": case.material_profile,
+        "material": dataclasses.asdict(material),
+        "reference": reference_metadata,
+        "tolerances": tolerance_metadata,
+    }
+    write_case_metadata(
+        case_directory / "metadata.json", base_metadata, case
+    )
     solver_status = run_solver((str(solver),), case_directory)
     if not solver_status[0]:
         return {
@@ -455,6 +544,30 @@ def run_normal_jkr_case(
         force_relative_tolerance,
         rebound_velocity_tolerance,
     )
+    mfix_rows = tuple(analysis.pop("samples"))
+    sample_times = tuple(float(row["time"]) for row in mfix_rows)
+    initial_overlap = (
+        -case.expected_initial_overlap
+        if case.wall_contact
+        else case.expected_initial_overlap
+    )
+    reference_rows = simulate_normal_contact(
+        sample_times,
+        initial_overlap,
+        case.contact_time_speed,
+        parameters,
+        case_contact_time(case, material) / 2000.0,
+    )
+    mfix_csv = case_directory / "mfix_contact.csv"
+    reference_csv = case_directory / "python_reference_contact.csv"
+    write_rows_csv(mfix_csv, mfix_rows)
+    write_rows_csv(reference_csv, reference_rows)
+    plot_paths = plot_contact_validation(
+        mfix_rows,
+        reference_rows,
+        case_directory,
+        case.name,
+    )
     if expected_behavior == "capture":
         behavior_passed = (
             analysis["captured"]
@@ -468,14 +581,36 @@ def run_normal_jkr_case(
             and analysis["rebound_velocity"] > rebound_velocity_tolerance
             and analysis["final_overlap"] < -parameters.critical_separation
         )
+    passed = (
+        analysis["passed"]
+        and behavior_passed
+        and reference_metadata["key_point_signs_passed"]
+    )
+    evidence = {
+        "mfix_csv": str(mfix_csv),
+        "python_reference_csv": str(reference_csv),
+        "plots": [str(path) for path in plot_paths],
+        "force_comparison": analysis["force_comparison"],
+    }
+    write_case_metadata(
+        case_directory / "metadata.json",
+        {
+            **base_metadata,
+            "comparison_evidence": evidence,
+            "trajectory_summary": analysis,
+            "behavior_passed": behavior_passed,
+        },
+        case,
+    )
     return {
         "case": case.name,
-        "passed": analysis["passed"] and behavior_passed,
+        "passed": passed,
         "directory": str(case_directory),
         "solver_status": solver_status,
         "expected_behavior": expected_behavior,
         "behavior_passed": behavior_passed,
         "trajectory": analysis,
+        "evidence": evidence,
     }
 
 
@@ -508,10 +643,15 @@ def run_restart_case(
     case_root = run_directory / case.name
     case_root.mkdir()
     write_case_metadata(case_root / "metadata.json", metadata, case)
-    continuous_name = f"R26_{case.name.upper()}_CONT"
     split_name = f"R26_{case.name.upper()}_SPLIT"
+    copy_canonical_case_asset(
+        CASES_ROOT,
+        case_root / "continuous",
+        case,
+        material,
+        numerical,
+    )
     branches = {
-        "continuous": ("new", case.stop_time, continuous_name),
         "stage1": ("new", case.restart_time, split_name),
         "restart1": ("restart_1", case.stop_time, split_name),
         "restart2": ("restart_2", case.stop_time, split_name),
@@ -672,7 +812,7 @@ def main() -> int:
     if arguments.suite in {"unit", "all"}:
         results.append(run_unit_suite(run_directory))
     if arguments.suite in {"hertz", "all"}:
-        for case in hertz_case_configs(default_material_config()):
+        for case in hertz_validation_cases():
             try:
                 results.append(run_hertz_case(
                     solver,
@@ -690,7 +830,7 @@ def main() -> int:
                     "reason": f"{type(error).__name__}: {error}",
                 })
     if arguments.suite in {"serial", "all"}:
-        for case in normal_jkr_cases(default_material_config()):
+        for case in serial_jkr_validation_cases():
             try:
                 results.append(
                     run_normal_jkr_case(

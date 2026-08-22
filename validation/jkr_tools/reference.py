@@ -298,3 +298,107 @@ def jkr_key_points(
         )
         for name, ratio in radius_ratios
     )
+
+def simulate_normal_contact(
+    sample_times: tuple[float, ...],
+    initial_overlap: float,
+    initial_approach_speed: float,
+    parameters: ContactParameters,
+    maximum_step: float,
+) -> tuple[dict[str, float | bool | None], ...]:
+    """Integrate the independent scalar JKR overlap equation with RK4."""
+    if not sample_times or sample_times[0] < 0.0:
+        raise ValueError("sample_times must be non-empty and non-negative")
+    if any(right <= left for left, right in zip(sample_times, sample_times[1:])):
+        raise ValueError("sample_times must be strictly increasing")
+    if initial_approach_speed <= 0.0 or maximum_step <= 0.0:
+        raise ValueError("speed and maximum_step must be positive")
+
+    def force(
+        overlap: float,
+        overlap_rate: float,
+        active: bool,
+    ) -> tuple[float, float | None]:
+        if not active or overlap < -parameters.critical_separation:
+            return 0.0, None
+        radius = stable_contact_radius(overlap, parameters)
+        value = (
+            elastic_normal_force(radius, parameters)
+            + normal_damping_coefficient(radius, parameters) * overlap_rate
+        )
+        return value, radius
+
+    def derivative(
+        overlap: float,
+        overlap_rate: float,
+        active: bool,
+    ) -> tuple[float, float]:
+        normal_force, _ = force(overlap, overlap_rate, active)
+        return overlap_rate, -normal_force / parameters.effective_mass
+
+    def rk4_step(
+        overlap: float,
+        overlap_rate: float,
+        step: float,
+        active: bool,
+    ) -> tuple[float, float]:
+        k1 = derivative(overlap, overlap_rate, active)
+        k2 = derivative(
+            overlap + 0.5 * step * k1[0],
+            overlap_rate + 0.5 * step * k1[1],
+            active,
+        )
+        k3 = derivative(
+            overlap + 0.5 * step * k2[0],
+            overlap_rate + 0.5 * step * k2[1],
+            active,
+        )
+        k4 = derivative(
+            overlap + step * k3[0],
+            overlap_rate + step * k3[1],
+            active,
+        )
+        return (
+            overlap + step * (k1[0] + 2.0 * k2[0] + 2.0 * k3[0] + k4[0]) / 6.0,
+            overlap_rate
+            + step * (k1[1] + 2.0 * k2[1] + 2.0 * k3[1] + k4[1]) / 6.0,
+        )
+
+    time = 0.0
+    overlap = initial_overlap
+    overlap_rate = initial_approach_speed
+    active = overlap >= 0.0
+    samples = []
+    for target_time in sample_times:
+        while time < target_time:
+            if not active and overlap >= 0.0 and overlap_rate > 0.0:
+                active = True
+            if (
+                active
+                and overlap < -parameters.critical_separation
+                and overlap_rate < 0.0
+            ):
+                active = False
+            step = min(maximum_step, target_time - time)
+            overlap, overlap_rate = rk4_step(
+                overlap, overlap_rate, step, active
+            )
+            time += step
+        if not active and overlap >= 0.0 and overlap_rate > 0.0:
+            active = True
+        if (
+            active
+            and overlap < -parameters.critical_separation
+            and overlap_rate < 0.0
+        ):
+            active = False
+        normal_force, contact_radius = force(overlap, overlap_rate, active)
+        samples.append({
+            "time": target_time,
+            "overlap": overlap,
+            "normal_speed": -overlap_rate,
+            "normal_force": normal_force,
+            "contact_radius": contact_radius,
+            "active": active,
+        })
+    return tuple(samples)

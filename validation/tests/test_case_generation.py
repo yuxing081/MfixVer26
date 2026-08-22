@@ -223,10 +223,10 @@ class JkrNormalCaseGenerationTests(unittest.TestCase):
 
     def test_case_names_and_speed_factors_are_explicit(self):
         expected = (
-            ("wall_normal_capture", 0.95 * self.wall_critical_speed),
-            ("wall_normal_rebound", 3.0 * self.wall_critical_speed),
-            ("pair_normal_capture", 0.95 * self.pair_critical_speed),
-            ("pair_normal_rebound", 3.0 * self.pair_critical_speed),
+            ("wall_normal_damped_capture", 0.95 * self.wall_critical_speed),
+            ("wall_normal_damped_rebound", 3.0 * self.wall_critical_speed),
+            ("pair_normal_damped_capture", 0.95 * self.pair_critical_speed),
+            ("pair_normal_damped_rebound", 3.0 * self.pair_critical_speed),
         )
         self.assertEqual(
             tuple(case.name for case in self.cases),

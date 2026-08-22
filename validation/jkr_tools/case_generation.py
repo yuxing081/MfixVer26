@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 import re
 from pathlib import Path
+import shutil
 
 from .config import CaseConfig, MaterialConfig, NumericalConfig, ParticleConfig
 
@@ -384,3 +385,96 @@ def write_case_files(
     (output_directory / "particle_input.dat").write_text(
         particle_text, encoding="utf-8"
     )
+
+def canonical_case_directory(cases_root: Path, case: CaseConfig) -> Path:
+    return cases_root / case.category / case.name
+
+
+def canonical_run_name(case: CaseConfig) -> str:
+    return f"R26_{case.name.upper()}"
+
+
+def canonical_case_texts(
+    case: CaseConfig,
+    material: MaterialConfig,
+    numerical: NumericalConfig,
+) -> tuple[str, str]:
+    include_jkr_keywords = case.use_jkr
+    mfix_text = mfix_dat_text(
+        case=case,
+        material=material,
+        numerical=numerical,
+        run_name=canonical_run_name(case),
+        run_type="new",
+        stop_time=case.stop_time,
+        partition=numerical.serial_partition,
+        include_jkr_keywords=include_jkr_keywords,
+    )
+    particle_text = particle_input_text(case.particles)
+    errors = validate_generated_case(
+        mfix_text,
+        particle_text,
+        case,
+        material,
+        numerical,
+        include_jkr_keywords,
+    )
+    if errors:
+        raise ValueError("; ".join(errors))
+    return mfix_text, particle_text
+
+
+def write_canonical_case_asset(
+    cases_root: Path,
+    case: CaseConfig,
+    material: MaterialConfig,
+    numerical: NumericalConfig,
+) -> Path:
+    """Write only the two deterministic, reviewable case input assets."""
+    output_directory = canonical_case_directory(cases_root, case)
+    output_directory.mkdir(parents=True, exist_ok=True)
+    mfix_text, particle_text = canonical_case_texts(case, material, numerical)
+    (output_directory / "mfix.dat").write_text(mfix_text, encoding="utf-8")
+    (output_directory / "particle_input.dat").write_text(
+        particle_text, encoding="utf-8"
+    )
+    return output_directory
+
+
+def canonical_case_sync_errors(
+    cases_root: Path,
+    case: CaseConfig,
+    material: MaterialConfig,
+    numerical: NumericalConfig,
+) -> tuple[str, ...]:
+    output_directory = canonical_case_directory(cases_root, case)
+    expected = dict(zip(
+        ("mfix.dat", "particle_input.dat"),
+        canonical_case_texts(case, material, numerical),
+    ))
+    errors = []
+    for name, text in expected.items():
+        path = output_directory / name
+        if not path.is_file():
+            errors.append(f"missing canonical asset: {path}")
+        elif path.read_bytes() != text.encode("utf-8"):
+            errors.append(f"canonical asset differs byte-for-byte: {path}")
+    return tuple(errors)
+
+
+def copy_canonical_case_asset(
+    cases_root: Path,
+    output_directory: Path,
+    case: CaseConfig,
+    material: MaterialConfig,
+    numerical: NumericalConfig,
+) -> None:
+    errors = canonical_case_sync_errors(
+        cases_root, case, material, numerical
+    )
+    if errors:
+        raise ValueError("; ".join(errors))
+    output_directory.mkdir(parents=True, exist_ok=False)
+    source_directory = canonical_case_directory(cases_root, case)
+    for name in ("mfix.dat", "particle_input.dat"):
+        shutil.copy2(source_directory / name, output_directory / name)

@@ -110,3 +110,114 @@ def plot_velocity_sweep(
         plt.close(figure)
         paths.append(path)
     return tuple(paths)
+
+def plot_contact_validation(
+    mfix_rows: Sequence[Mapping[str, object]],
+    reference_rows: Sequence[Mapping[str, object]],
+    output_directory: Path,
+    file_prefix: str,
+) -> tuple[Path, ...]:
+    """Plot MFIX contact evidence against an independent Python trajectory."""
+    if not mfix_rows or not reference_rows:
+        raise ValueError("contact plotting requires MFIX and reference rows")
+    output_directory.mkdir(parents=True, exist_ok=True)
+    try:
+        import matplotlib.pyplot as plt
+    except ImportError as error:
+        raise RuntimeError("matplotlib is required to create plots") from error
+
+    paths = []
+
+    def save(figure, suffix: str) -> None:
+        figure.tight_layout()
+        path = output_directory / f"{file_prefix}_{suffix}.png"
+        figure.savefig(path, dpi=180)
+        plt.close(figure)
+        paths.append(path)
+
+    figure, axis = plt.subplots(figsize=(6.6, 4.2))
+    axis.plot(
+        [float(row["time"]) for row in mfix_rows],
+        [float(row["normal_speed"]) for row in mfix_rows],
+        label="MFIX26",
+    )
+    axis.plot(
+        [float(row["time"]) for row in reference_rows],
+        [float(row["normal_speed"]) for row in reference_rows],
+        "--",
+        label="Python JKR reference",
+    )
+    axis.set(xlabel="Time (s)", ylabel="Normal separation velocity (m/s)")
+    axis.grid(True, alpha=0.3)
+    axis.legend()
+    save(figure, "velocity_time")
+
+    figure, axis = plt.subplots(figsize=(6.6, 4.2))
+    axis.plot(
+        [float(row["time"]) for row in mfix_rows],
+        [float(row["angular_speed_1"]) for row in mfix_rows],
+        label="MFIX26 particle 1",
+    )
+    if any(row.get("angular_speed_2") is not None for row in mfix_rows):
+        axis.plot(
+            [float(row["time"]) for row in mfix_rows],
+            [float(row["angular_speed_2"]) for row in mfix_rows],
+            label="MFIX26 particle 2",
+        )
+    axis.plot(
+        [float(row["time"]) for row in reference_rows],
+        [0.0 for _ in reference_rows],
+        "--",
+        label="Python normal reference",
+    )
+    axis.set(xlabel="Time (s)", ylabel="Angular speed (rad/s)")
+    axis.grid(True, alpha=0.3)
+    axis.legend()
+    save(figure, "angular_velocity_time")
+
+    mfix_active = tuple(
+        row for row in mfix_rows if row.get("active")
+    )
+    reference_active = tuple(
+        row for row in reference_rows if row.get("active")
+    )
+    figure, axis = plt.subplots(figsize=(6.6, 4.2))
+    axis.plot(
+        [float(row["overlap"]) for row in mfix_active],
+        [float(row["observed_normal_force"]) for row in mfix_active],
+        label="MFIX26",
+    )
+    axis.plot(
+        [float(row["overlap"]) for row in reference_active],
+        [float(row["normal_force"]) for row in reference_active],
+        "--",
+        label="Python JKR reference",
+    )
+    axis.set(xlabel="Overlap (m)", ylabel="Total normal force (N)")
+    axis.grid(True, alpha=0.3)
+    axis.legend()
+    save(figure, "normal_force_overlap")
+
+    mfix_radius = tuple(
+        row for row in mfix_rows if row.get("contact_radius") is not None
+    )
+    reference_radius = tuple(
+        row for row in reference_rows if row.get("contact_radius") is not None
+    )
+    figure, axis = plt.subplots(figsize=(6.6, 4.2))
+    axis.plot(
+        [float(row["time"]) for row in mfix_radius],
+        [float(row["contact_radius"]) for row in mfix_radius],
+        label="MFIX26 overlap-inferred",
+    )
+    axis.plot(
+        [float(row["time"]) for row in reference_radius],
+        [float(row["contact_radius"]) for row in reference_radius],
+        "--",
+        label="Python JKR reference",
+    )
+    axis.set(xlabel="Time (s)", ylabel="Contact radius (m)")
+    axis.grid(True, alpha=0.3)
+    axis.legend()
+    save(figure, "contact_radius_time")
+    return tuple(paths)

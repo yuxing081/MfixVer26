@@ -6,7 +6,7 @@ calculation modules never read experiment parameters from mutable module state.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 
 @dataclass(frozen=True)
@@ -63,6 +63,8 @@ class CaseConfig:
     name: str
     category: str
     description: str
+    material_profile: str
+    critical_speed_factor: float | None
     particles: tuple[ParticleConfig, ...]
     wall_contact: bool
     use_jkr: bool
@@ -78,7 +80,7 @@ class CaseConfig:
     write_vtk_files: bool = False
 
 
-def default_material_config() -> MaterialConfig:
+def damped_frictional_material_config() -> MaterialConfig:
     return MaterialConfig(
         particle_radius=1.0e-6,
         particle_density=2500.0,
@@ -98,6 +100,32 @@ def default_material_config() -> MaterialConfig:
         wall_rolling_angle=0.01,
         jkr_safety_factor=1.0,
     )
+def elastic_jkr_material_config() -> MaterialConfig:
+    """Return the undamped material profile used for JKR/Hertz isolation."""
+    return replace(
+        damped_frictional_material_config(),
+        normal_restitution=1.0,
+        tangential_restitution=1.0,
+    )
+
+
+def material_config(profile: str) -> MaterialConfig:
+    factories = {
+        "damped_frictional": damped_frictional_material_config,
+        "elastic_jkr": elastic_jkr_material_config,
+    }
+    try:
+        return factories[profile]()
+    except KeyError as error:
+        raise ValueError(f"Unknown material profile: {profile}") from error
+
+
+def default_material_config() -> MaterialConfig:
+    """Compatibility alias for the historical damped/frictional profile."""
+    return damped_frictional_material_config()
+
+
+
 
 
 def default_numerical_config() -> NumericalConfig:
@@ -165,6 +193,8 @@ def restart_case_configs(
             category="restart",
             description="unequal-radius pair with active PFT, PFR, and JKR neck",
             particles=pair_particles,
+            material_profile="damped_frictional",
+            critical_speed_factor=None,
             wall_contact=False,
             use_jkr=True,
             stop_time=8.0e-8,
@@ -182,6 +212,8 @@ def restart_case_configs(
             category="restart",
             description="oblique particle-wall contact with wall history",
             particles=wall_particles,
+            material_profile="damped_frictional",
+            critical_speed_factor=None,
             wall_contact=True,
             use_jkr=True,
             stop_time=6.0e-7,
@@ -259,6 +291,8 @@ def hertz_case_configs(
             category="native_hertz",
             description=description,
             particles=particles,
+            material_profile="damped_frictional",
+            critical_speed_factor=None,
             wall_contact=wall_contact,
             use_jkr=False,
             stop_time=5.0e-7,
@@ -298,17 +332,23 @@ def hertz_case_configs(
     )
 
 
-def jkr_normal_case_configs(
+def _jkr_normal_case_configs(
     material: MaterialConfig,
     wall_critical_speed: float,
     pair_critical_speed: float,
+    material_profile: str,
+    capture_factor: float,
+    rebound_factor: float,
+    damped_name: bool,
 ) -> tuple[CaseConfig, ...]:
     """Return normal cases scaled from the adhesion-only critical speed."""
     if wall_critical_speed <= 0.0 or pair_critical_speed <= 0.0:
         raise ValueError("critical speeds must be positive")
     diameter = 2.0 * material.particle_radius
 
-    def wall_case(name: str, speed: float, behavior: str) -> CaseConfig:
+    def wall_case(
+        name: str, speed: float, speed_factor: float, behavior: str
+    ) -> CaseConfig:
         particle = ParticleConfig(
             position=(10.0e-6, 1.2e-6, 10.0e-6),
             velocity=(0.0, -speed, 0.0),
@@ -320,6 +360,8 @@ def jkr_normal_case_configs(
             name=name,
             category="particle_wall",
             description=f"JKR wall normal {behavior} at {speed:.12e} m/s",
+            material_profile=material_profile,
+            critical_speed_factor=speed_factor,
             particles=(particle,),
             wall_contact=True,
             use_jkr=True,
@@ -335,7 +377,9 @@ def jkr_normal_case_configs(
             write_vtk_files=True,
         )
 
-    def pair_case(name: str, speed: float, behavior: str) -> CaseConfig:
+    def pair_case(
+        name: str, speed: float, speed_factor: float, behavior: str
+    ) -> CaseConfig:
         particles = (
             ParticleConfig(
                 position=(10.0e-6, 8.9e-6, 10.0e-6),
@@ -356,6 +400,8 @@ def jkr_normal_case_configs(
             name=name,
             category="particle_pair",
             description=f"JKR pair normal {behavior} at {speed:.12e} m/s",
+            material_profile=material_profile,
+            critical_speed_factor=speed_factor,
             particles=particles,
             wall_contact=False,
             use_jkr=True,
@@ -371,28 +417,106 @@ def jkr_normal_case_configs(
             write_vtk_files=True,
         )
 
+    suffix = "_damped" if damped_name else ""
     return (
         wall_case(
-            "wall_normal_capture",
-            0.95 * wall_critical_speed,
+            f"wall_normal{suffix}_capture",
+            capture_factor * wall_critical_speed,
+            capture_factor,
             "capture",
         ),
         wall_case(
-            "wall_normal_rebound",
-            3.0 * wall_critical_speed,
+            f"wall_normal{suffix}_rebound",
+            rebound_factor * wall_critical_speed,
+            rebound_factor,
             "rebound",
         ),
         pair_case(
-            "pair_normal_capture",
-            0.95 * pair_critical_speed,
+            f"pair_normal{suffix}_capture",
+            capture_factor * pair_critical_speed,
+            capture_factor,
             "capture",
         ),
         pair_case(
-            "pair_normal_rebound",
-            3.0 * pair_critical_speed,
+            f"pair_normal{suffix}_rebound",
+            rebound_factor * pair_critical_speed,
+            rebound_factor,
             "rebound",
         ),
     )
+
+
+def elastic_jkr_normal_case_configs(
+    material: MaterialConfig,
+    wall_critical_speed: float,
+    pair_critical_speed: float,
+) -> tuple[CaseConfig, ...]:
+    if material.normal_restitution != 1.0:
+        raise ValueError("elastic_jkr cases require normal_restitution=1")
+    return _jkr_normal_case_configs(
+        material,
+        wall_critical_speed,
+        pair_critical_speed,
+        "elastic_jkr",
+        0.95,
+        1.05,
+        False,
+    )
+
+
+def damped_jkr_normal_case_configs(
+    material: MaterialConfig,
+    wall_critical_speed: float,
+    pair_critical_speed: float,
+) -> tuple[CaseConfig, ...]:
+    if material.normal_restitution != 0.6:
+        raise ValueError("damped cases require normal_restitution=0.6")
+    return _jkr_normal_case_configs(
+        material,
+        wall_critical_speed,
+        pair_critical_speed,
+        "damped_frictional",
+        0.95,
+        3.0,
+        True,
+    )
+
+
+def jkr_normal_case_configs(
+    material: MaterialConfig,
+    wall_critical_speed: float,
+    pair_critical_speed: float,
+) -> tuple[CaseConfig, ...]:
+    """Compatibility wrapper selected explicitly by restitution."""
+    if material.normal_restitution == 1.0:
+        return elastic_jkr_normal_case_configs(
+            material, wall_critical_speed, pair_critical_speed
+        )
+    return damped_jkr_normal_case_configs(
+        material, wall_critical_speed, pair_critical_speed
+    )
+
+def elastic_hertz_case_configs(
+    material: MaterialConfig,
+    wall_critical_speed: float,
+    pair_critical_speed: float,
+) -> tuple[CaseConfig, ...]:
+    """Return Hertz controls at the exact four elastic-JKR impact speeds."""
+    jkr_cases = elastic_jkr_normal_case_configs(
+        material, wall_critical_speed, pair_critical_speed
+    )
+    return tuple(
+        replace(
+            case,
+            name=case.name.replace("_normal_", "_hertz_elastic_"),
+            category="native_hertz",
+            description=case.description.replace("JKR", "pure elastic Hertz"),
+            use_jkr=False,
+        )
+        for case in jkr_cases
+    )
+
+
 
 def comparison_tolerances() -> dict[str, tuple[float, float]]:
     """Return initial absolute/relative tolerances by data source and field."""

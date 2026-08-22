@@ -32,17 +32,26 @@ def _normal_sample(
     contact_kind: str,
     particle_ids: tuple[int, ...],
     particle_radius: float,
-) -> tuple[float, float, float]:
+) -> tuple[float, float, float, tuple[float, ...]]:
     selected = tuple(records[particle_id] for particle_id in particle_ids)
     positions = tuple(_vector(record, "Coordinates") for record in selected)
     velocities = tuple(_vector(record, "Velocity") for record in selected)
     forces = tuple(_vector(record, "Collision_force") for record in selected)
+    angular_speeds = tuple(
+        math.sqrt(_dot(angular, angular))
+        for angular in (
+            tuple(float(value) for value in record.get(
+                "Angular_velocity", (0.0, 0.0, 0.0)
+            ))
+            for record in selected
+        )
+    )
     if contact_kind == "wall":
         wall_normal = (0.0, 1.0, 0.0)
         overlap = particle_radius - positions[0][1]
         normal_speed = _dot(velocities[0], wall_normal)
         normal_force = _dot(forces[0], wall_normal)
-        return overlap, normal_speed, normal_force
+        return overlap, normal_speed, normal_force, angular_speeds
     displacement = tuple(
         second - first for first, second in zip(positions[0], positions[1])
     )
@@ -56,7 +65,7 @@ def _normal_sample(
     overlap = 2.0 * particle_radius - distance
     normal_speed = _dot(relative_velocity, direction)
     normal_force = -_dot(forces[0], direction)
-    return overlap, normal_speed, normal_force
+    return overlap, normal_speed, normal_force, angular_speeds
 
 
 def analyze_normal_jkr_trajectory(
@@ -96,7 +105,7 @@ def analyze_normal_jkr_trajectory(
         records = {
             int(row["Particle_ID"]): row for row in frame["records"]
         }
-        overlap, normal_speed, observed_force = _normal_sample(
+        overlap, normal_speed, observed_force, angular_speeds = _normal_sample(
             records, contact_kind, ids, particle_radius
         )
         was_active = active
@@ -104,6 +113,7 @@ def analyze_normal_jkr_trajectory(
             overlap, active, parameters.critical_separation
         )
         time = float(frame["time"])
+        contact_radius = None
         expected_force = None
         absolute_error = None
         relative_error = None
@@ -148,6 +158,9 @@ def analyze_normal_jkr_trajectory(
             "overlap": overlap,
             "normal_speed": normal_speed,
             "observed_normal_force": observed_force,
+            "contact_radius": contact_radius,
+            "angular_speed_1": angular_speeds[0],
+            "angular_speed_2": angular_speeds[1] if len(angular_speeds) > 1 else None,
             "expected_normal_force": expected_force,
             "active": active,
             "passed": passed,
@@ -191,4 +204,5 @@ def analyze_normal_jkr_trajectory(
             "maximum_error_time": maximum_error_time,
             "first_difference": first_difference,
         },
+        "samples": samples,
     }

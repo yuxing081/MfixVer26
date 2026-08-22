@@ -9,19 +9,18 @@
 - 生产源码基线：`954ea0b9639592b9632c4f8fba92d23eabf42b99`。
 - 串行 solver SHA-256：`0e7a4e7e8fad556481bcb11bd76aed0508b180c7a5e0944aaca681dfc8a0ab6f`。
 - DMP solver SHA-256：`3523a0d4352431534f8576e905201c04abc7105ba6902f721552916a182ab26c`。
-- 最新统一全套证据：`/home/yuxing/mfix/MfixVer26/validation/results/runs/20260822T123328.871736Z-136416`（unit、Hertz、基础 JKR、restart 共 10 项全部 PASS）。
+- 最新统一全套证据：`/home/yuxing/mfix/MfixVer26/validation/results/runs/20260822T141016.204154Z-3529`（unit、7 Hertz、8 JKR normal、2 restart 共 18 项全部 PASS）。
 - 前一 restart 基线：`/home/yuxing/mfix/MfixVer26/validation/results/runs/20260822T095448.025415Z-107484`。
-- 已通过：60 个单元测试、3 个官方 MFIX26 原生 Hertz 保护工况、4 个 serial JKR normal 核心工况、serial pair/wall RESTART_1 末态逐字节回归及 RESTART_2 敏感性负对照。
+- 已通过：66 个单元测试、17 个 canonical case 字节同步、7 个官方 MFIX26 Hertz 对照、8 个 serial JKR normal 工况、32 张 contact 图，以及既有 serial restart 回归。
 
 ## 本轮目标与顺序
 
-1. 原生 Hertz 保护：官方 MFIX26 与 JKR solver 在 `use_jkr=.False.` 下对照。
-2. JKR 理论关键点与基础捕获/回弹：平衡点、零重叠稳定点、最大拉力/拉脱点、临界分离，随后运行 wall/pair capture 与 rebound。
-3. wall/pair 速度扫描：先粗扫定位转变区间，再加密一次，输出统一 CSV 和五类图。
-4. 异质表面能：均质退化、不同粒子 gamma、ID 交换、low-high 对称、wall、默认回退。
-5. 壁面几何：single face、edge、corner、facet seam。
-6. 2-rank DMP：cross-rank 新接触、活跃历史迁移、wall、cloud，并按 global ID/pair ID 比较。
-7. restart 内部边界诊断：NEIGHBORS、PFT、PFR、JKR state、facet 和 wall histories 的双精度逐字段连续性。
+1. 已完成：17 个 Git 跟踪 canonical case、显式 e=1/e=0.6 档案及逐字节同步检查。
+2. 已完成：e=1 固定 0.95/1.05 JKR、对应 Hertz、独立 RK4 参考、CSV 和四类 contact 图。
+3. 下一阶段：异质表面能的均质退化、不同粒子 gamma、ID 交换、low-high 对称、wall 和默认回退。
+4. 后续：壁面 single face/edge/corner/facet seam。
+5. 后续：2-rank DMP 跨区新接触、活跃历史迁移、wall、cloud，按 global ID/pair ID 比较。
+6. 后续：restart 边界 NEIGHBORS、PFT、PFR、JKR state、facet 和 wall histories 双精度诊断。
 
 ## 当前判据
 
@@ -36,12 +35,13 @@
 
 | 阶段 | 状态 | 最近证据/阻塞 |
 |---|---|---|
-| 验证框架与统一 restart | PASS | 53 unit tests；restart 证据见当前基线 |
+| 验证框架与统一 restart | PASS | 66 unit tests；restart 证据见当前基线 |
+| canonical case 资产 | PASS | 17 case、34 个输入文件与集中生成器逐字节一致；运行时只复制到时间戳目录 |
 | 文献和旧测试过程审查 | PASS | 4 篇直接相关论文复制到 `docs/references`，旧目录只读 |
-| 原生 Hertz 保护 | PASS | stock module `3e95ef9e…be6b7`；pair/wall normal、wall oblique 三组共同 501 帧及双精度末态完全一致；迁移 solver 仅多写一个逐字节重复末帧 |
+| 原生 Hertz 保护 | PASS | 3 个 e=0.6 原生保护和 4 个 e=1 对应速度 case；官方/迁移轨迹及双精度末态一致 |
 | JKR 理论关键点 | PASS | 已单测最大拉力、临界分离、零重叠和平衡点，明确最大拉力与临界分离不是同一点 |
-| 基础 capture/rebound | PARTIAL | 四项核心行为和逐点法向力 PASS；能量分解尚未接入。1.05×、2.0×黏附临界速度在 e=0.6 下仍捕获，失败证据已保留 |
-| 速度扫描 | PENDING | 等基础工况 |
+| 基础 capture/rebound | PASS | e=1 wall/pair：0.95× 捕获、1.05× 断颈回弹；e=0.6 case 明确改名；逐点力、CSV 和四类图齐全 |
+| 速度扫描 | DEFERRED | 按当前要求不搜索转变区间；后续若需要只增加显式固定速度矩阵 |
 | 异质表面能 | PENDING | 等基础工况 |
 | 壁面几何 | PENDING | 等基础工况 |
 | 2-rank DMP | PENDING | serial 通过后开始 |
