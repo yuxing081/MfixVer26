@@ -1,6 +1,6 @@
 # MFIX 26.1.2 JKR Validation
 
-更新日期：2026-08-22
+更新日期：2026-08-23
 
 ## 1. 验证对象
 
@@ -64,7 +64,22 @@
 y=8.975/11.025 μm。restart 工况为了预先建立 PFT/PFR/state 历史，
 保留各自的初始接触或正重叠，不套用该间距。
 
-### 2.3 比较与容差原则
+### 2.3 结果目录组织
+
+后续新运行采用
+`validation/results/runs/<timestamp>/<测试类别>/<物理子类>/<case>/<执行模式>`
+的层级。第一层使用 `contact_physics`、`dmp`、`restart`、
+`wall_geometry` 等测试类别；第二层区分 `pair_normal`、
+`pair_oblique`、`wall_normal`、`wall_oblique`、`pair_cross`
+等物理子类；最内层保存 `serial`、`dmp2`、`official`、
+`migrated`、`continuous` 或 `restart1` 等执行模式。
+
+该结构继承 MFIX23 results 的可浏览性，同时保留 MFIX26 时间戳运行根目录、
+统一 metadata/summary 和不可覆盖历史证据的约束。既有结果目录不移动或
+回填；新布局只用于后续运行。完整目录示例和迁移验收条件见
+`docs/NEXT_STAGE_PROMPT.md`。
+
+### 2.4 比较与容差原则
 
 比较器返回 PASS/FAIL、首个超差字段/索引/物理时间，以及每个字段的最大绝对误差和发生位置。DMP 粒子按 global particle ID 对齐；接触按 `(min_gid, max_gid)` 物理 pair ID 对齐，重复、缺失或时间不一致直接失败。
 

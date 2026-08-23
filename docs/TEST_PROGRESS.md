@@ -1,6 +1,6 @@
 # JKR Validation Test Progress
 
-更新：2026-08-22
+更新：2026-08-23
 
 ## 当前基线
 
@@ -21,6 +21,20 @@
 4. 随后：2-rank DMP 跨区新接触、活跃历史迁移、wall、cloud，按 global ID/pair ID 比较。
 5. 随后：restart 边界 NEIGHBORS、PFT、PFR、JKR state、facet 和 wall histories 双精度诊断。
 6. 较后：壁面 single face/edge/corner/facet seam；多壁面同时接触不作为近期阻塞项。
+
+## 结果目录组织约定
+
+后续新运行参考 MFIX23 的可浏览方式，按
+`测试类别 / 物理子类 / case / 执行模式` 组织。例如：
+
+- `contact_physics/pair_normal/pair_normal_capture/serial`；
+- `contact_physics/pair_normal/pair_gamma_low_high/serial`；
+- `dmp/pair_cross/pair_cross_jkr/{serial,dmp2}`；
+- `restart/pair_history/restart_pair_pfr/{continuous,restart1,restart2}`。
+
+最外层仍为不可覆盖的 `validation/results/runs/<timestamp>`。既有历史结果
+不移动、不改名；新布局只应用于后续运行。完整契约见
+`docs/NEXT_STAGE_PROMPT.md`。
 
 ## 当前判据
 
