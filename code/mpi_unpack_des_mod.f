@@ -13,6 +13,7 @@
       PUBLIC :: DESMPI_UNPACK_PARCROSS, DESMPI_UNPACK_GHOSTPAR
       PUBLIC :: unpack_dbuf
       PUBLIC :: RESTORE_PENDING_PAIR_HISTORY
+      PUBLIC :: JKR_DIAG_PAIR_EVENT
 
       INTEGER :: PENDING_PAIR_COUNT = 0
       INTEGER :: PENDING_PAIR_CAPACITY = 0
@@ -21,6 +22,9 @@
       DOUBLE PRECISION, ALLOCATABLE :: PENDING_PAIR_PFT(:,:)
       DOUBLE PRECISION, ALLOCATABLE :: PENDING_PAIR_PFR(:,:)
       LOGICAL, ALLOCATABLE :: PENDING_PAIR_STATE(:)
+      LOGICAL :: JKR_DIAG_CHECKED = .FALSE.
+      LOGICAL :: JKR_DIAG_ENABLED = .FALSE.
+      INTEGER :: JKR_DIAG_UNIT = -1
 
       interface unpack_dbuf
          module procedure unpack_db0 ! real scalars
@@ -840,6 +844,8 @@
       PENDING_PAIR_PFT(:,PENDING_PAIR_COUNT) = PFT
       PENDING_PAIR_PFR(:,PENDING_PAIR_COUNT) = PFR
       PENDING_PAIR_STATE(PENDING_PAIR_COUNT) = STATE
+      CALL JKR_DIAG_PAIR_EVENT('unpack_queue',OWNER_GID,NEIGH_GID, &
+         -1,-1,0D0,0D0,(/0D0,0D0,0D0/),PFT,PFR,STATE)
       END SUBROUTINE QUEUE_PAIR_HISTORY
 
 
@@ -906,6 +912,11 @@
                PFT_NEIGHBOR(:,CC) = PENDING_PAIR_PFT(:,N)
                PFR_NEIGHBOR(:,CC) = PENDING_PAIR_PFR(:,N)
                JKR_CONTACT_STATE(CC) = PENDING_PAIR_STATE(N)
+               CALL JKR_DIAG_PAIR_EVENT('pending_restore_direct', &
+                  PENDING_PAIR_OWNER_GID(N),PENDING_PAIR_NEIGH_GID(N), &
+                  -1,CC,0D0,0D0,(/0D0,0D0,0D0/), &
+                  PFT_NEIGHBOR(:,CC),PFR_NEIGHBOR(:,CC), &
+                  JKR_CONTACT_STATE(CC))
                FOUND = .TRUE.
                EXIT
             ENDIF
@@ -920,6 +931,11 @@
                   PFT_NEIGHBOR(:,CC) = -PENDING_PAIR_PFT(:,N)
                   PFR_NEIGHBOR(:,CC) = -PENDING_PAIR_PFR(:,N)
                   JKR_CONTACT_STATE(CC) = PENDING_PAIR_STATE(N)
+                  CALL JKR_DIAG_PAIR_EVENT('pending_restore_reverse', &
+                     PENDING_PAIR_OWNER_GID(N),PENDING_PAIR_NEIGH_GID(N), &
+                     -1,CC,0D0,0D0,(/0D0,0D0,0D0/), &
+                     PFT_NEIGHBOR(:,CC),PFR_NEIGHBOR(:,CC), &
+                     JKR_CONTACT_STATE(CC))
                   EXIT
                ENDIF
             ENDDO
@@ -928,5 +944,45 @@
 
       PENDING_PAIR_COUNT = 0
       END SUBROUTINE RESTORE_PENDING_PAIR_HISTORY
+
+! Default-off, rank-local double-precision JKR diagnostic stream.
+      SUBROUTINE JKR_DIAG_PAIR_EVENT(PHASE_TAG,OWNER_GID,NEIGH_GID, &
+         WALL_ID,LOCAL_SLOT,OVERLAP,NORMAL_FORCE,TANGENTIAL_FORCE, &
+         PFT,PFR,STATE)
+      USE COMPAR, ONLY: MYPE
+      USE RUN, ONLY: TIME
+      IMPLICIT NONE
+      CHARACTER(LEN=*), INTENT(IN) :: PHASE_TAG
+      INTEGER, INTENT(IN) :: OWNER_GID,NEIGH_GID,WALL_ID,LOCAL_SLOT
+      DOUBLE PRECISION, INTENT(IN) :: OVERLAP,NORMAL_FORCE
+      DOUBLE PRECISION, INTENT(IN) :: TANGENTIAL_FORCE(3),PFT(3),PFR(3)
+      LOGICAL, INTENT(IN) :: STATE
+      CHARACTER(LEN=64) :: FILE_NAME
+      CHARACTER(LEN=32) :: ENV_VALUE
+      INTEGER :: ENV_LENGTH,ENV_STATUS
+
+      IF(.NOT.JKR_DIAG_CHECKED) THEN
+         ENV_VALUE = ''
+         CALL GET_ENVIRONMENT_VARIABLE('MFIX_JKR_DIAGNOSTICS', &
+            ENV_VALUE,ENV_LENGTH,ENV_STATUS)
+         JKR_DIAG_ENABLED = ENV_STATUS == 0 .AND. ENV_LENGTH > 0 .AND. &
+            TRIM(ENV_VALUE) /= '0'
+         JKR_DIAG_CHECKED = .TRUE.
+      ENDIF
+      IF(.NOT.JKR_DIAG_ENABLED) RETURN
+
+      IF(JKR_DIAG_UNIT == -1) THEN
+         WRITE(FILE_NAME,'("JKR_DIAGNOSTIC_rank",I4.4,".dat")') MYPE
+         OPEN(NEWUNIT=JKR_DIAG_UNIT,FILE=TRIM(FILE_NAME), &
+            STATUS='REPLACE',ACTION='WRITE')
+         WRITE(JKR_DIAG_UNIT,'(A)') &
+            'time phase rank owner_gid neigh_gid wall_id local_slot ' // &
+            'overlap normal_force tangential_force pft pfr jkr_state'
+      ENDIF
+      WRITE(JKR_DIAG_UNIT,*) TIME,TRIM(PHASE_TAG),MYPE,OWNER_GID, &
+         NEIGH_GID,WALL_ID,LOCAL_SLOT,OVERLAP,NORMAL_FORCE, &
+         TANGENTIAL_FORCE,PFT,PFR,STATE
+      FLUSH(JKR_DIAG_UNIT)
+      END SUBROUTINE JKR_DIAG_PAIR_EVENT
 
       end module mpi_unpack_des

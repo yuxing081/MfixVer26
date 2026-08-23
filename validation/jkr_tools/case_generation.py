@@ -55,8 +55,14 @@ def boolean_text(value: bool) -> str:
 def particle_input_text(particles: tuple[ParticleConfig, ...]) -> str:
     if not particles:
         raise ValueError("a case must contain particles")
-    user_count = 1 + len(particles[0].diagnostic_values)
-    if any(1 + len(item.diagnostic_values) != user_count for item in particles):
+    surface_columns = tuple(
+        particle.surface_energy is not None for particle in particles
+    )
+    if any(surface_columns) and not all(surface_columns):
+        raise ValueError("particle surface-energy columns must be all present or absent")
+    surface_count = int(all(surface_columns))
+    user_count = surface_count + len(particles[0].diagnostic_values)
+    if any(surface_count + len(item.diagnostic_values) != user_count for item in particles):
         raise ValueError("all particles must use equal user-scalar columns")
     user_columns = " ".join(
         f"| usr_{index}" for index in range(1, user_count + 1)
@@ -69,7 +75,7 @@ def particle_input_text(particles: tuple[ParticleConfig, ...]) -> str:
             particle.diameter,
             particle.density,
             *particle.velocity,
-            particle.surface_energy,
+            *((particle.surface_energy,) if surface_count else ()),
             *particle.diagnostic_values,
         )
         rows.append(" ".join(
@@ -106,7 +112,7 @@ Density:         T
 Velocity:        T
 Temperature:     F          293.15
 Species:         F
-User_Scalar:     T
+User_Scalar:     {'T' if user_count else 'F'}
 ========================================================================
 | x | y | z | Phase_ID | Diameter | Density | u | v | w {user_columns} |
 ========================================================================

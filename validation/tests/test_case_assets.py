@@ -64,12 +64,19 @@ class MaterialProfileTests(unittest.TestCase):
             (0.95, 3.0, 0.95, 3.0),
         )
 
+    def test_heterogeneous_wall_profile_is_elastic_with_unlike_wall_energy(self):
+        material = material_config("elastic_jkr_wall_heterogeneous")
+        self.assertEqual(material.normal_restitution, 1.0)
+        self.assertEqual(material.tangential_restitution, 1.0)
+        self.assertEqual(material.surface_energy, 0.015)
+        self.assertEqual(material.wall_surface_energy, 0.030)
+
 
 class CanonicalCaseAssetTests(unittest.TestCase):
     def test_all_committed_assets_match_generator_byte_for_byte(self):
         numerical = default_numerical_config()
         cases = canonical_contact_cases()
-        self.assertEqual(len(cases), 17)
+        self.assertEqual(len(cases), 29)
         for case in cases:
             with self.subTest(case=case.name):
                 self.assertEqual(
@@ -104,7 +111,7 @@ class CanonicalCaseAssetTests(unittest.TestCase):
     def test_standard_approach_cases_use_five_percent_radius_gap(self):
         numerical = default_numerical_config()
         for case in canonical_contact_cases():
-            if case.category == "restart":
+            if case.category in {"restart", "dmp"}:
                 continue
             material = material_config(case.material_profile)
             expected_gap = (

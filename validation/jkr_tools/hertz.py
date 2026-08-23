@@ -7,7 +7,7 @@ from .comparison import ComparisonResult, compare_fields
 from .io import VtpArray, VtpData, read_vtp
 
 COMPARABLE_FIELDS = ("Coordinates", "Velocity", "Angular_velocity", "Collision_force")
-ALIASES = {"Coordinates": ("coordinates", "Coordinates", "Points", "Position"), "Velocity": ("Velocity",), "Angular_velocity": ("Angular_velocity",), "Collision_force": ("Collision_force",), "Diameter": ("Diameter",)}
+ALIASES = {"Coordinates": ("coordinates", "Coordinates", "Points", "Position"), "Velocity": ("Velocity",), "Angular_velocity": ("Angular_velocity",), "Collision_force": ("Collision_force",), "Diameter": ("Diameter",), "Particle_Rank": ("Particle_Rank",), "Surface_Energy": ("User_Defined_Var_1",)}
 
 def _id(value: Any, index: int) -> int:
     number = float(value)
@@ -32,7 +32,7 @@ def frame_to_records(frame: VtpData) -> dict[str, Any]:
     if len(set(particle_ids)) != len(particle_ids):
         raise ValueError("VTP frame contains duplicate Particle_ID values")
     decoded: dict[str, tuple[tuple[float, ...], ...]] = {}
-    for field in (*COMPARABLE_FIELDS, "Diameter"):
+    for field in (*COMPARABLE_FIELDS, "Diameter", "Particle_Rank", "Surface_Energy"):
         array = next((frame.arrays[name] for name in ALIASES[field] if name in frame.arrays), None)
         if array is None:
             continue
@@ -45,7 +45,7 @@ def frame_to_records(frame: VtpData) -> dict[str, Any]:
         record: dict[str, Any] = {"Particle_ID": particle_id}
         for field, rows in decoded.items():
             values = rows[i]
-            record[field] = values[0] if field == "Diameter" and len(values) == 1 else values
+            record[field] = values[0] if len(values) == 1 else values
         records.append(record)
     return {"time": float(frame.time), "records": tuple(records)}
 

@@ -55,7 +55,7 @@ class ParticleConfig:
     velocity: tuple[float, float, float]
     diameter: float
     density: float
-    surface_energy: float
+    surface_energy: float | None
     diagnostic_values: tuple[float, ...] = ()
 
 
@@ -110,10 +110,21 @@ def elastic_jkr_material_config() -> MaterialConfig:
     )
 
 
+def elastic_jkr_wall_heterogeneous_material_config() -> MaterialConfig:
+    """Return the elastic profile with a deliberately unlike wall surface."""
+    return replace(
+        elastic_jkr_material_config(),
+        wall_surface_energy=0.030,
+    )
+
+
 def material_config(profile: str) -> MaterialConfig:
     factories = {
         "damped_frictional": damped_frictional_material_config,
         "elastic_jkr": elastic_jkr_material_config,
+        "elastic_jkr_wall_heterogeneous": (
+            elastic_jkr_wall_heterogeneous_material_config
+        ),
     }
     try:
         return factories[profile]()
@@ -546,7 +557,296 @@ def elastic_hertz_case_configs(
     )
 
 
+def heterogeneous_surface_energy_case_configs(
+    material: MaterialConfig,
+    wall_impact_speed: float,
+    pair_impact_speed: float,
+    initial_gap_fraction: float,
+) -> tuple[CaseConfig, ...]:
+    """Return fixed-speed elastic cases for the particle surface-energy contract."""
+    if material.normal_restitution != 1.0:
+        raise ValueError("heterogeneous surface-energy cases require restitution=1")
+    if wall_impact_speed <= 0.0 or pair_impact_speed <= 0.0:
+        raise ValueError("heterogeneous impact speeds must be positive")
+    if not 0.0 < initial_gap_fraction < 1.0:
+        raise ValueError("initial_gap_fraction must be between zero and one")
 
+    radius = material.particle_radius
+    diameter = 2.0 * radius
+    initial_gap = initial_gap_fraction * radius
+    center_y = 10.0e-6
+    half_separation = radius + 0.5 * initial_gap
+    low_gamma = 0.0075
+    high_gamma = 0.030
+
+    def particle(
+        y_position: float,
+        y_velocity: float,
+        surface_energy: float | None,
+    ) -> ParticleConfig:
+        return ParticleConfig(
+            position=(10.0e-6, y_position, 10.0e-6),
+            velocity=(0.0, y_velocity, 0.0),
+            diameter=diameter,
+            density=material.particle_density,
+            surface_energy=surface_energy,
+        )
+
+    def pair_particles(
+        lower_gamma: float | None,
+        upper_gamma: float | None,
+    ) -> tuple[ParticleConfig, ParticleConfig]:
+        return (
+            particle(
+                center_y - half_separation,
+                0.5 * pair_impact_speed,
+                lower_gamma,
+            ),
+            particle(
+                center_y + half_separation,
+                -0.5 * pair_impact_speed,
+                upper_gamma,
+            ),
+        )
+
+    def pair_case(
+        name: str,
+        description: str,
+        particles: tuple[ParticleConfig, ParticleConfig],
+        des_usr_var_size: int = 1,
+    ) -> CaseConfig:
+        return CaseConfig(
+            name=name,
+            category="particle_pair",
+            description=description,
+            material_profile="elastic_jkr",
+            critical_speed_factor=0.95,
+            particles=particles,
+            wall_contact=False,
+            use_jkr=True,
+            stop_time=2.0e-6,
+            restart_time=None,
+            monitor_interval=1.0e-9,
+            restart_interval=2.0e-6,
+            vtk_interval=2.0e-9,
+            des_usr_var_size=des_usr_var_size,
+            monitor_user_variables=(),
+            expected_initial_overlap=-initial_gap,
+            contact_time_speed=pair_impact_speed,
+            write_vtk_files=True,
+        )
+
+    low_high = pair_particles(low_gamma, high_gamma)
+    wall_particle = particle(radius + initial_gap, -wall_impact_speed, low_gamma)
+    return (
+        pair_case(
+            "pair_gamma_homogeneous",
+            "equal particle surface energies recover the homogeneous JKR case",
+            pair_particles(material.surface_energy, material.surface_energy),
+        ),
+        pair_case(
+            "pair_gamma_low_high",
+            "unlike low/high particle surface energies in one solids phase",
+            low_high,
+        ),
+        pair_case(
+            "pair_gamma_high_low",
+            "unlike particle surface energies exchanged between physical positions",
+            pair_particles(high_gamma, low_gamma),
+        ),
+        pair_case(
+            "pair_gamma_id_swap",
+            "low/high physical state retained while particle-input row IDs are swapped",
+            tuple(reversed(low_high)),
+        ),
+        pair_case(
+            "pair_gamma_fallback",
+            "particle surface-energy column omitted so the phase default is used",
+            pair_particles(None, None),
+            des_usr_var_size=0,
+        ),
+        pair_case(
+            "pair_gamma_invalid_nonpositive",
+            "zero and negative particle surface energies fall back to the phase default",
+            pair_particles(0.0, -0.001),
+        ),
+        CaseConfig(
+            name="wall_gamma_heterogeneous",
+            category="particle_wall",
+            description="unlike particle and wall surface energies",
+            material_profile="elastic_jkr_wall_heterogeneous",
+            critical_speed_factor=0.95,
+            particles=(wall_particle,),
+            wall_contact=True,
+            use_jkr=True,
+            stop_time=2.0e-6,
+            restart_time=None,
+            monitor_interval=1.0e-9,
+            restart_interval=2.0e-6,
+            vtk_interval=2.0e-9,
+            des_usr_var_size=1,
+            monitor_user_variables=(),
+            expected_initial_overlap=initial_gap,
+            contact_time_speed=wall_impact_speed,
+            write_vtk_files=True,
+        ),
+    )
+
+
+
+def dmp_case_configs(
+    elastic_material: MaterialConfig,
+    damped_material: MaterialConfig,
+) -> tuple[CaseConfig, ...]:
+    """Return the fixed 2-rank DMP cases; no adaptive scans or seeded histories."""
+    radius = elastic_material.particle_radius
+    diameter = 2.0 * radius
+
+    def particle(
+        position: tuple[float, float, float],
+        velocity: tuple[float, float, float],
+        material: MaterialConfig,
+    ) -> ParticleConfig:
+        return ParticleConfig(
+            position=position,
+            velocity=velocity,
+            diameter=diameter,
+            density=material.particle_density,
+            surface_energy=material.surface_energy,
+        )
+
+    def case(
+        name: str,
+        description: str,
+        particles: tuple[ParticleConfig, ...],
+        profile: str,
+        wall_contact: bool,
+        stop_time: float,
+        expected_initial_overlap: float,
+        contact_time_speed: float,
+    ) -> CaseConfig:
+        return CaseConfig(
+            name=name,
+            category="dmp",
+            description=description,
+            material_profile=profile,
+            critical_speed_factor=None,
+            particles=particles,
+            wall_contact=wall_contact,
+            use_jkr=True,
+            stop_time=stop_time,
+            restart_time=None,
+            monitor_interval=5.0e-9,
+            restart_interval=stop_time,
+            vtk_interval=5.0e-9,
+            des_usr_var_size=1,
+            monitor_user_variables=(),
+            expected_initial_overlap=expected_initial_overlap,
+            contact_time_speed=contact_time_speed,
+            write_vtk_files=True,
+        )
+
+    pair_cross = (
+        particle(
+            (8.975e-6, 10.0e-6, 10.0e-6),
+            (0.175, 0.0, 0.0),
+            elastic_material,
+        ),
+        particle(
+            (11.025e-6, 10.0e-6, 10.0e-6),
+            (-0.175, 0.0, 0.0),
+            elastic_material,
+        ),
+    )
+    pair_new_contact = (
+        particle(
+            (9.8e-6, 10.0e-6, 10.0e-6),
+            (0.4, 0.0, 0.0),
+            elastic_material,
+        ),
+        particle(
+            (12.05e-6, 10.0e-6, 10.0e-6),
+            (0.0, 0.0, 0.0),
+            elastic_material,
+        ),
+    )
+    active_migration = (
+        particle(
+            (9.7e-6, 8.975e-6, 10.0e-6),
+            (0.8, 0.075, 0.05),
+            damped_material,
+        ),
+        particle(
+            (9.7e-6, 11.025e-6, 10.0e-6),
+            (0.8, -0.075, -0.05),
+            damped_material,
+        ),
+    )
+    wall_cross = (
+        particle(
+            (9.7e-6, 1.05e-6, 10.0e-6),
+            (0.8, -0.2, 0.1),
+            damped_material,
+        ),
+    )
+    cloud = (
+        particle((8.95e-6, 8.5e-6, 10.0e-6), (0.3, 0.0, 0.0), damped_material),
+        particle((11.05e-6, 8.5e-6, 10.0e-6), (-0.3, 0.0, 0.0), damped_material),
+        particle((8.95e-6, 11.5e-6, 10.0e-6), (0.3, 0.0, 0.0), damped_material),
+        particle((11.05e-6, 11.5e-6, 10.0e-6), (-0.3, 0.0, 0.0), damped_material),
+    )
+    return (
+        case(
+            "pair_cross_jkr",
+            "particles on opposite ranks establish a JKR contact across x=10 um",
+            pair_cross,
+            "elastic_jkr",
+            False,
+            1.0e-6,
+            -0.05e-6,
+            0.35,
+        ),
+        case(
+            "pair_new_contact_jkr",
+            "particle crosses x=10 um before first JKR contact on the destination rank",
+            pair_new_contact,
+            "elastic_jkr",
+            False,
+            1.2e-6,
+            -0.25e-6,
+            0.4,
+        ),
+        case(
+            "pair_active_contact_migration",
+            "captured oblique contact naturally develops histories then migrates owner",
+            active_migration,
+            "damped_frictional",
+            False,
+            0.8e-6,
+            -0.05e-6,
+            0.15,
+        ),
+        case(
+            "wall_cross_jkr",
+            "sliding wall contact crosses x=10 um with active wall history",
+            wall_cross,
+            "damped_frictional",
+            True,
+            0.8e-6,
+            0.05e-6,
+            0.8,
+        ),
+        case(
+            "cloud_collision_jkr",
+            "four-particle cloud provides a serial/DMP integration comparison",
+            cloud,
+            "damped_frictional",
+            False,
+            1.0e-6,
+            -0.10e-6,
+            0.6,
+        ),
+    )
 def comparison_tolerances() -> dict[str, tuple[float, float]]:
     """Return initial absolute/relative tolerances by data source and field."""
     return {
@@ -560,4 +860,6 @@ def comparison_tolerances() -> dict[str, tuple[float, float]]:
         "vtp_velocity": (1.0e-4, 1.0e-5),
         "vtp_angular_velocity": (4.0, 1.0e-5),
         "vtp_force": (1.0e-8, 1.0e-4),
+        "dmp_vtp_velocity": (5.0e-4, 1.0e-2),
+        "dmp_vtp_angular_velocity": (2.0e2, 1.0e-2),
     }

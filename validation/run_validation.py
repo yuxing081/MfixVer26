@@ -28,11 +28,13 @@ from validation.jkr_tools.config import (
     damped_frictional_material_config,
     damped_jkr_normal_case_configs,
     default_material_config,
+    dmp_case_configs,
     default_numerical_config,
     elastic_hertz_case_configs,
     elastic_jkr_material_config,
     elastic_jkr_normal_case_configs,
     hertz_case_configs,
+    heterogeneous_surface_energy_case_configs,
     material_config,
     restart_case_configs,
 )
@@ -40,6 +42,7 @@ from validation.jkr_tools.hertz import (
     compare_case_trajectories,
     extract_contact_metrics,
 )
+from validation.jkr_tools.dmp import audit_serial_dmp_trajectories
 from validation.jkr_tools.jkr import analyze_normal_jkr_trajectory
 from validation.jkr_tools.reference import (
     ContactParameters,
@@ -55,8 +58,10 @@ from validation.jkr_tools.plotting import plot_contact_validation
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CASES_ROOT = PROJECT_ROOT / "validation" / "cases"
 DEFAULT_SOLVER = PROJECT_ROOT / "code" / "build" / "mfixsolver"
+DEFAULT_DMP_SOLVER = PROJECT_ROOT / "code" / "build_dmp" / "mfixsolver_dmp"
 DEFAULT_NATIVE_WRAPPER = Path("/home/yuxing/miniforge3/envs/mfix-26.1.2/bin/mfixsolver")
 DEFAULT_NATIVE_MODULE = Path("/home/yuxing/miniforge3/envs/mfix-26.1.2/bin/mfixsolver.so")
+DEFAULT_MPIEXEC = Path("/usr/bin/mpiexec")
 RESULTS_ROOT = PROJECT_ROOT / "validation" / "results"
 
 
@@ -111,9 +116,15 @@ def compiler_metadata(solver: Path) -> dict[str, Any]:
     }
 
 
-def environment_metadata(solver: Path) -> dict[str, Any]:
+def environment_metadata(
+    solver: Path,
+    execution_mode: str = "serial",
+    mpi_processes: int = 1,
+    partition: tuple[int, int, int] | None = None,
+) -> dict[str, Any]:
     material = default_material_config()
     numerical = default_numerical_config()
+    actual_partition = numerical.serial_partition if partition is None else partition
     return {
         "mfix_version": command_text([str(solver), "--version"]),
         "jkr_git": git_metadata(),
@@ -122,9 +133,9 @@ def environment_metadata(solver: Path) -> dict[str, Any]:
             "sha256": file_sha256(solver),
         },
         "execution": {
-            "mode": "serial",
-            "mpi_processes": 1,
-            "partition": numerical.serial_partition,
+            "mode": execution_mode,
+            "mpi_processes": mpi_processes,
+            "partition": actual_partition,
         },
         "compiler": compiler_metadata(solver),
         "python": sys.version,
@@ -160,6 +171,15 @@ def case_result_root(results_root: Path, case: CaseConfig) -> Path:
     if case.category == "restart":
         history = "wall_history" if case.wall_contact else "pair_history"
         return results_root / "restart" / history / case.name
+    if case.category == "dmp":
+        subcategories = {
+            "pair_cross_jkr": "pair_cross",
+            "pair_new_contact_jkr": "pair_new_contact",
+            "pair_active_contact_migration": "active_contact_migration",
+            "wall_cross_jkr": "wall_cross",
+            "cloud_collision_jkr": "cloud",
+        }
+        return results_root / "dmp" / subcategories[case.name] / case.name
     return (
         results_root
         / "contact_physics"
@@ -458,6 +478,81 @@ def normal_contact_parameters(
     )
 
 
+def resolved_particle_surface_energies(
+    case: CaseConfig,
+    material: MaterialConfig,
+) -> tuple[float, ...]:
+    """Apply the production positive-override/non-positive-fallback contract."""
+    return tuple(
+        material.surface_energy
+        if particle.surface_energy is None or particle.surface_energy <= 0.0
+        else particle.surface_energy
+        for particle in case.particles
+    )
+
+
+def case_contact_parameters(
+    case: CaseConfig,
+    material: MaterialConfig,
+) -> ContactParameters:
+    """Build explicit reference parameters from the case's physical surfaces."""
+    resolved = resolved_particle_surface_energies(case, material)
+    first = case.particles[0]
+    second = None if case.wall_contact else case.particles[1]
+    return contact_parameters(
+        0.5 * first.diameter,
+        first.density,
+        resolved[0],
+        material.young_modulus,
+        material.poisson_ratio,
+        material.normal_restitution,
+        None if second is None else 0.5 * second.diameter,
+        None if second is None else second.density,
+        material.wall_surface_energy if second is None else resolved[1],
+        material.wall_young_modulus if second is None else material.young_modulus,
+        material.wall_poisson_ratio if second is None else material.poisson_ratio,
+    )
+
+
+def surface_energy_contract(
+    case: CaseConfig,
+    material: MaterialConfig,
+    parameters: ContactParameters,
+) -> dict[str, Any]:
+    """Return auditable raw, resolved, and combined surface-energy evidence."""
+    raw = tuple(particle.surface_energy for particle in case.particles)
+    resolved = resolved_particle_surface_energies(case, material)
+    contract = {
+        "particle_values_raw": raw,
+        "particle_values_resolved": resolved,
+        "phase_default": material.surface_energy,
+        "fallback_rule": "missing or non-positive particle value uses phase default",
+        "gamma_i": resolved[0],
+        "gamma_effective": parameters.effective_surface_energy,
+        "work_of_adhesion": parameters.work_of_adhesion,
+    }
+    if case.wall_contact:
+        contract["gamma_wall"] = material.wall_surface_energy
+        contract["combination_rule"] = (
+            "sqrt(gamma_particle * gamma_wall)"
+        )
+    else:
+        contract["gamma_j"] = resolved[1]
+        contract["combination_rule"] = "sqrt(gamma_i * gamma_j)"
+    return contract
+
+
+def heterogeneous_surface_energy_cases() -> tuple[CaseConfig, ...]:
+    """Return the fixed analytical-speed heterogeneous serial registry."""
+    material = elastic_jkr_material_config()
+    wall_speed, pair_speed = critical_speeds(material)
+    return heterogeneous_surface_energy_case_configs(
+        material,
+        0.95 * wall_speed,
+        0.95 * pair_speed,
+        default_numerical_config().normal_initial_gap_fraction,
+    )
+
 def critical_speeds(material: MaterialConfig) -> tuple[float, float]:
     return (
         adhesion_only_critical_speed(normal_contact_parameters(material, True)),
@@ -500,6 +595,15 @@ def serial_jkr_validation_cases() -> tuple[CaseConfig, ...]:
     return (
         *normal_jkr_cases(elastic_jkr_material_config()),
         *normal_jkr_cases(damped_frictional_material_config()),
+        *heterogeneous_surface_energy_cases(),
+    )
+
+
+
+def dmp_validation_cases() -> tuple[CaseConfig, ...]:
+    return dmp_case_configs(
+        elastic_jkr_material_config(),
+        damped_frictional_material_config(),
     )
 
 
@@ -507,6 +611,7 @@ def canonical_contact_cases() -> tuple[CaseConfig, ...]:
     return (
         *hertz_validation_cases(),
         *serial_jkr_validation_cases(),
+        *dmp_validation_cases(),
         *restart_case_configs(damped_frictional_material_config()),
     )
 
@@ -551,9 +656,14 @@ def run_normal_jkr_case(
 ) -> dict[str, Any]:
     material = material_config(case.material_profile)
     numerical = default_numerical_config()
-    parameters = normal_contact_parameters(material, case.wall_contact)
+    parameters = case_contact_parameters(case, material)
     critical_speed = adhesion_only_critical_speed(parameters)
-    expected_behavior = "capture" if case.name.endswith("capture") else "rebound"
+    expected_behavior = (
+        "capture"
+        if case.critical_speed_factor is not None
+        and case.critical_speed_factor < 1.0
+        else "rebound"
+    )
     copy_canonical_case_asset(
         CASES_ROOT,
         case_directory,
@@ -566,6 +676,7 @@ def run_normal_jkr_case(
     rebound_velocity_tolerance = 1.0e-6
     key_points = tuple(jkr_key_points(parameters))
     reference_metadata = {
+        "surface_energy_contract": surface_energy_contract(case, material, parameters),
         "contact_parameters": dataclasses.asdict(parameters),
         "key_points": [dataclasses.asdict(point) for point in key_points],
         "key_point_signs_passed": key_points_have_expected_signs(parameters),
@@ -770,6 +881,249 @@ def run_restart_case(
     }
 
 
+
+def configure_partition(
+    mfix_path: Path,
+    partition: tuple[int, int, int],
+) -> None:
+    """Change only the three MPI partition keywords in a generated input."""
+    replacements = {
+        "nodesi": partition[0],
+        "nodesj": partition[1],
+        "nodesk": partition[2],
+    }
+    output = []
+    seen = set()
+    for line in mfix_path.read_text(encoding="utf-8").splitlines():
+        keyword = line.partition("=")[0].strip().casefold()
+        if keyword in replacements:
+            output.append(f"{keyword} = {replacements[keyword]}")
+            seen.add(keyword)
+        else:
+            output.append(line)
+    if seen != set(replacements):
+        raise ValueError(f"partition keywords missing from {mfix_path}: {seen}")
+    mfix_path.write_text("\n".join(output) + "\n", encoding="utf-8")
+
+
+def partition_independent_mfix_sha256(path: Path) -> str:
+    """Hash an mfix.dat after normalizing only nodesi/nodesj/nodesk."""
+    lines = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        keyword = line.partition("=")[0].strip().casefold()
+        lines.append(f"{keyword} = <partition>" if keyword in {
+            "nodesi", "nodesj", "nodesk"
+        } else line)
+    return hashlib.sha256(("\n".join(lines) + "\n").encode("utf-8")).hexdigest()
+
+
+def dmp_case_contract(case: CaseConfig, audit: Mapping[str, Any]) -> dict[str, Any]:
+    """Evaluate case-specific natural contact/migration prerequisites."""
+    contact = audit["contact_set_comparison"]
+    first_contact = contact["first_active_time"]
+    histories = audit["rank_transitions"]
+    transition_times = tuple(
+        float(history[1]["time"])
+        for history in histories.values()
+        if len(history) > 1
+    )
+    initial_ranks = {
+        int(history[0]["rank"]) for history in histories.values() if history
+    }
+    passed = contact["active_frame_count"] > 0
+    requirements = {
+        "contact_naturally_formed": contact["active_frame_count"] > 0,
+        "initial_ranks": tuple(sorted(initial_ranks)),
+        "rank_transition_times": transition_times,
+        "first_contact_time": first_contact,
+    }
+    if case.name == "pair_cross_jkr":
+        requirements["particles_initially_on_distinct_ranks"] = len(initial_ranks) == 2
+        passed = passed and requirements["particles_initially_on_distinct_ranks"]
+    elif case.name == "pair_new_contact_jkr":
+        formed_after_cross = bool(transition_times) and first_contact is not None and (
+            min(transition_times) <= float(first_contact)
+        )
+        requirements["first_contact_after_rank_cross"] = formed_after_cross
+        passed = passed and formed_after_cross
+    elif case.name == "pair_active_contact_migration":
+        active_before_migration = (
+            first_contact is not None
+            and any(time > float(first_contact) for time in transition_times)
+        )
+        histories_nonzero = audit["maximums"]["serial_angular_speed"] > 0.0
+        requirements["active_contact_before_owner_migration"] = active_before_migration
+        requirements["nonzero_rotation_from_natural_oblique_contact"] = histories_nonzero
+        passed = passed and active_before_migration and histories_nonzero
+    elif case.name == "wall_cross_jkr":
+        wall_history_crossed = bool(transition_times) and first_contact is not None
+        requirements["active_wall_contact_crosses_rank"] = wall_history_crossed
+        passed = passed and wall_history_crossed
+    return {"passed": passed, **requirements}
+
+
+def run_dmp_case(
+    serial_solver: Path,
+    dmp_solver: Path,
+    mpiexec: Path,
+    case: CaseConfig,
+    case_root: Path,
+    metadata: dict[str, Any],
+) -> dict[str, Any]:
+    """Run byte-synchronized serial/2-rank inputs and compare by physical IDs."""
+    material = material_config(case.material_profile)
+    numerical = default_numerical_config()
+    serial_directory = case_root / "serial"
+    dmp_directory = case_root / "dmp"
+    copy_canonical_case_asset(
+        CASES_ROOT, serial_directory, case, material, numerical
+    )
+    copy_canonical_case_asset(
+        CASES_ROOT, dmp_directory, case, material, numerical
+    )
+    configure_partition(dmp_directory / "mfix.dat", numerical.dmp_partition)
+    input_contract = {
+        "particle_input_byte_identical": (
+            file_sha256(serial_directory / "particle_input.dat")
+            == file_sha256(dmp_directory / "particle_input.dat")
+        ),
+        "mfix_physics_byte_identical_except_partition": (
+            partition_independent_mfix_sha256(serial_directory / "mfix.dat")
+            == partition_independent_mfix_sha256(dmp_directory / "mfix.dat")
+        ),
+        "serial_partition": numerical.serial_partition,
+        "dmp_partition": numerical.dmp_partition,
+    }
+    base_metadata = {
+        **metadata,
+        "material_profile": case.material_profile,
+        "material": dataclasses.asdict(material),
+        "serial_solver": {
+            "path": str(serial_solver),
+            "sha256": file_sha256(serial_solver),
+        },
+        "dmp_solver": {
+            "path": str(dmp_solver),
+            "sha256": file_sha256(dmp_solver),
+        },
+        "executions": {
+            "serial": {
+                "execution_mode": "serial",
+                "mpi_processes": 1,
+                "partition": numerical.serial_partition,
+            },
+            "dmp": {
+                "execution_mode": "dmp",
+                "mpi_processes": numerical.dmp_ranks,
+                "partition": numerical.dmp_partition,
+            },
+        },
+        "input_contract": input_contract,
+    }
+    write_case_metadata(case_root / "metadata.json", base_metadata, case)
+    serial_status = run_solver((str(serial_solver),), serial_directory)
+    dmp_status = run_solver(
+        (
+            str(mpiexec),
+            "-np",
+            str(numerical.dmp_ranks),
+            str(dmp_solver),
+        ),
+        dmp_directory,
+    )
+    statuses_passed = serial_status[0] and dmp_status[0]
+    if not statuses_passed:
+        return {
+            "case": case.name,
+            "passed": False,
+            "directory": str(case_root),
+            "solver_status": {"serial": serial_status, "dmp": dmp_status},
+            "input_contract": input_contract,
+        }
+    tolerances = comparison_tolerances()
+    trajectory_tolerances = {
+        "Coordinates": tolerances["vtp_position"],
+        "Velocity": tolerances["dmp_vtp_velocity"],
+        "Angular_velocity": tolerances["dmp_vtp_angular_velocity"],
+        "Collision_force": tolerances["vtp_force"],
+    }
+    strict_reporting_tolerances = {
+        "Coordinates": tolerances["vtp_position"],
+        "Velocity": tolerances["vtp_velocity"],
+        "Angular_velocity": tolerances["vtp_angular_velocity"],
+        "Collision_force": tolerances["vtp_force"],
+    }
+    serial_paths = tuple(sorted(serial_directory.glob("PARTICLES_*.vtp")))
+    dmp_paths = tuple(sorted(dmp_directory.glob("PARTICLES_*.vtp")))
+    audit = audit_serial_dmp_trajectories(
+        serial_paths,
+        dmp_paths,
+        trajectory_tolerances,
+        case.wall_contact,
+    )
+    strict_audit = audit_serial_dmp_trajectories(
+        serial_paths,
+        dmp_paths,
+        strict_reporting_tolerances,
+        case.wall_contact,
+    )
+    strict_differences = tuple(
+        {
+            **comparison["first_difference"],
+            "comparison_field": field,
+        }
+        for field, comparison in strict_audit["trajectory_comparison"].items()
+        if comparison["first_difference"] is not None
+    )
+    audit["first_physical_difference"] = min(
+        strict_differences,
+        key=lambda difference: difference["time"],
+        default=None,
+    )
+    audit["strict_reporting_tolerances"] = strict_reporting_tolerances
+    contract = dmp_case_contract(case, audit)
+    inputs_match = (
+        input_contract["particle_input_byte_identical"]
+        and input_contract["mfix_physics_byte_identical_except_partition"]
+    )
+    passed = inputs_match and audit["passed"] and contract["passed"]
+    evidence_path = case_root / "comparison.json"
+    evidence_path.write_text(
+        json.dumps(
+            {
+                "passed": passed,
+                "input_contract": input_contract,
+                "audit": audit,
+                "case_contract": contract,
+            },
+            indent=2,
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+    write_case_metadata(
+        case_root / "metadata.json",
+        {
+            **base_metadata,
+            "tolerances": trajectory_tolerances,
+            "audit": audit,
+            "case_contract": contract,
+            "comparison_path": str(evidence_path),
+        },
+        case,
+    )
+    return {
+        "case": case.name,
+        "passed": passed,
+        "directory": str(case_root),
+        "solver_status": {"serial": serial_status, "dmp": dmp_status},
+        "input_contract": input_contract,
+        "audit": audit,
+        "case_contract": contract,
+        "evidence": str(evidence_path),
+    }
+
+
 def run_unit_suite(unit_directory: Path) -> dict[str, Any]:
     unit_directory.mkdir(parents=True, exist_ok=False)
     log_path = unit_directory / "unit-tests.log"
@@ -825,13 +1179,25 @@ def write_summary(results_root: Path, results: list[dict[str, Any]]) -> None:
 def parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "suite", choices=("unit", "hertz", "serial", "restart", "all")
+        "suite", choices=("unit", "hertz", "serial", "dmp", "restart", "all")
     )
     parser.add_argument(
         "--solver",
         type=Path,
         default=DEFAULT_SOLVER,
         help="MFIX 26.1.2 serial solver",
+    )
+    parser.add_argument(
+        "--dmp-solver",
+        type=Path,
+        default=DEFAULT_DMP_SOLVER,
+        help="MFIX 26.1.2 DMP solver",
+    )
+    parser.add_argument(
+        "--mpiexec",
+        type=Path,
+        default=DEFAULT_MPIEXEC,
+        help="MPI launcher for the fixed 2-rank cases",
     )
     parser.add_argument(
         "--native-wrapper",
@@ -855,6 +1221,16 @@ def main() -> int:
         raise FileNotFoundError(f"solver is not executable: {solver}")
     native_wrapper = arguments.native_wrapper.expanduser().resolve()
     native_module = arguments.native_module.expanduser().resolve()
+    dmp_solver = arguments.dmp_solver.expanduser().resolve()
+    mpiexec = arguments.mpiexec.expanduser().resolve()
+    if arguments.suite in {"dmp", "all"}:
+        if not dmp_solver.is_file() or not os.access(dmp_solver, os.X_OK):
+            raise FileNotFoundError(
+                f"DMP solver is not executable: {dmp_solver}"
+            )
+        if not mpiexec.is_file() or not os.access(mpiexec, os.X_OK):
+            raise FileNotFoundError(f"MPI launcher is not executable: {mpiexec}")
+
     if arguments.suite in {"hertz", "all"}:
         if not native_wrapper.is_file() or not os.access(native_wrapper, os.X_OK):
             raise FileNotFoundError(
@@ -865,7 +1241,31 @@ def main() -> int:
                 f"native solver module does not exist: {native_module}"
             )
     clear_results_directory(RESULTS_ROOT)
-    metadata = environment_metadata(solver)
+    numerical = default_numerical_config()
+    uses_dmp = arguments.suite in {"dmp", "all"}
+    execution_mode = (
+        "dmp"
+        if arguments.suite == "dmp"
+        else "mixed_serial_dmp"
+        if uses_dmp
+        else "serial"
+    )
+    metadata = environment_metadata(
+        solver,
+        execution_mode=execution_mode,
+        mpi_processes=numerical.dmp_ranks if uses_dmp else 1,
+        partition=(
+            numerical.dmp_partition
+            if uses_dmp
+            else numerical.serial_partition
+        ),
+    )
+    if uses_dmp:
+        metadata["dmp_solver"] = {
+            "path": str(dmp_solver),
+            "sha256": file_sha256(dmp_solver),
+        }
+        metadata["mpiexec"] = str(mpiexec)
     (RESULTS_ROOT / "metadata.json").write_text(
         json.dumps(metadata, indent=2, sort_keys=True),
         encoding="utf-8",
@@ -910,6 +1310,39 @@ def main() -> int:
                     "directory": str(serial_directory),
                     "reason": f"{type(error).__name__}: {error}",
                 })
+    if arguments.suite in {"dmp", "all"}:
+        prerequisites_passed = True
+        for case in dmp_validation_cases():
+            case_root = case_result_root(RESULTS_ROOT, case)
+            if case.name == "cloud_collision_jkr" and not prerequisites_passed:
+                results.append({
+                    "case": case.name,
+                    "passed": False,
+                    "directory": str(case_root),
+                    "reason": (
+                        "not run: one or more focused DMP prerequisites failed"
+                    ),
+                })
+                continue
+            try:
+                result = run_dmp_case(
+                    solver,
+                    dmp_solver,
+                    mpiexec,
+                    case,
+                    case_root,
+                    metadata,
+                )
+            except Exception as error:
+                result = {
+                    "case": case.name,
+                    "passed": False,
+                    "directory": str(case_root),
+                    "reason": f"{type(error).__name__}: {error}",
+                }
+            results.append(result)
+            if case.name != "cloud_collision_jkr":
+                prerequisites_passed = prerequisites_passed and result["passed"]
     if arguments.suite in {"restart", "all"}:
         for case in restart_case_configs(default_material_config()):
             case_root = case_result_root(RESULTS_ROOT, case)

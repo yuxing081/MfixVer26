@@ -26,7 +26,8 @@ CONTAINS
       USE param1
       USE discretelement
       use desgrid
-      USE MPI_UNPACK_DES, ONLY: RESTORE_PENDING_PAIR_HISTORY
+      USE MPI_UNPACK_DES, ONLY: RESTORE_PENDING_PAIR_HISTORY, &
+         JKR_DIAG_PAIR_EVENT
       Use des_thermo
       IMPLICIT NONE
 !-----------------------------------------------
@@ -62,6 +63,21 @@ LOGICAL :: found
          endif
       enddo
 !$omp end parallel do
+      IF(USE_JKR) THEN
+         DO LL=1,MAX_PIP
+            CC_START = 1
+            IF(LL > 1) CC_START = NEIGHBOR_INDEX_OLD(LL-1)
+            CC_END = NEIGHBOR_INDEX_OLD(LL)
+            DO CC=CC_START,CC_END-1
+               IF(NEIGHBORS_OLD(CC) <= 0) CYCLE
+               CALL JKR_DIAG_PAIR_EVENT('neighbor_before_rebuild', &
+                  IGLOBAL_ID(LL),IGLOBAL_ID(NEIGHBORS_OLD(CC)),-1,CC, &
+                  0D0,0D0,(/0D0,0D0,0D0/),PFT_NEIGHBOR_OLD(:,CC), &
+                  PFR_NEIGHBOR_OLD(:,CC),JKR_CONTACT_STATE_OLD(CC))
+            ENDDO
+         ENDDO
+      ENDIF
+
 
       NEIGHBOR_INDEX(:) = 0
 
@@ -155,7 +171,21 @@ LOGICAL :: found
 !$omp end parallel do
 
 ! Apply DMP owner-migration histories only after valid CC slots exist.
-      IF(USE_JKR) CALL RESTORE_PENDING_PAIR_HISTORY
+      IF(USE_JKR) THEN
+         CALL RESTORE_PENDING_PAIR_HISTORY
+         DO LL=1,MAX_PIP
+            CC_START = 1
+            IF(LL > 1) CC_START = NEIGHBOR_INDEX(LL-1)
+            CC_END = NEIGHBOR_INDEX(LL)
+            DO CC=CC_START,CC_END-1
+               IF(NEIGHBORS(CC) <= 0) CYCLE
+               CALL JKR_DIAG_PAIR_EVENT('neighbor_after_restore', &
+                  IGLOBAL_ID(LL),IGLOBAL_ID(NEIGHBORS(CC)),-1,CC, &
+                  0D0,0D0,(/0D0,0D0,0D0/),PFT_NEIGHBOR(:,CC), &
+                  PFR_NEIGHBOR(:,CC),JKR_CONTACT_STATE(CC))
+            ENDDO
+         ENDDO
+      ENDIF
 
 
 ! resetting do_nsearch to false here since neighbor search will have
