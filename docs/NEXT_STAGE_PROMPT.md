@@ -31,10 +31,11 @@ case 设计、比较流程和绘图逻辑。
 
 ## 二、结果目录契约
 
-参考 MFIX23 的可浏览结构，但必须保留 MFIX26 的时间戳运行根目录：
+参考 MFIX23 的可浏览结构，结果直接保存在固定分类目录：
 
 ```text
-validation/results/runs/<timestamp>/
+validation/results/
+├── RUN_INFO.txt
 ├── metadata.json
 ├── summary.csv
 ├── summary.json
@@ -46,11 +47,11 @@ validation/results/runs/<timestamp>/
 │   ├── wall_normal/<case_name>/<execution_mode>/
 │   └── wall_oblique/<case_name>/<execution_mode>/
 ├── dmp/
-│   ├── pair_cross/<case_name>/{serial,dmp2}/
-│   ├── pair_new_contact/<case_name>/{serial,dmp2}/
-│   ├── active_contact_migration/<case_name>/{serial,dmp2}/
-│   ├── wall_cross/<case_name>/{serial,dmp2}/
-│   └── cloud/<case_name>/{serial,dmp2}/
+│   ├── pair_cross/<case_name>/{serial,dmp}/
+│   ├── pair_new_contact/<case_name>/{serial,dmp}/
+│   ├── active_contact_migration/<case_name>/{serial,dmp}/
+│   ├── wall_cross/<case_name>/{serial,dmp}/
+│   └── cloud/<case_name>/{serial,dmp}/
 ├── restart/
 │   ├── pair_history/<case_name>/{continuous,stage1,restart1,restart2}/
 │   └── wall_history/<case_name>/{continuous,stage1,restart1,restart2}/
@@ -67,26 +68,28 @@ validation/results/runs/<timestamp>/
 2. 第二层是物理子类，如 `pair_normal`、`pair_oblique`、
    `wall_normal`、`wall_oblique`、`pair_cross`；
 3. 第三层是明确的 case 名称；
-4. 最内层是执行模式或比较对象，如 `serial`、`dmp2`、
+4. 最内层是执行模式或比较对象，如 `serial`、`dmp`、
    `official`、`migrated`、`continuous`、`restart1`。
 
 Hertz、JKR 和异质表面能由 case 名称及 metadata 明确区分，不在
 `contact_physics` 下额外增加模型层，以便打开目录后直接看到正碰、斜碰等
 物理子类。
 
-不要为追求完全对称而创建空目录。只在实际运行时创建相应路径。
-既有 `validation/results/runs` 历史证据不得移动、改名或覆盖；新布局只应用
-于新运行。所有 summary 和 metadata 中的结果路径必须同步使用新相对层级，
-同时记录绝对路径。
+不要为追求完全对称而创建空目录。只在实际运行时创建相应路径。每次调用
+统一 runner 时先清理上一份结果快照，再写入一套自洽的新结果；Git commit、
+canonical case 和 solver hash 用于重新生成需要的旧结果。
+`RUN_INFO.txt` 记录运行时间、MFIX 版本、Git commit/dirty、solver hash、
+suite、执行模式和 MPI 进程数。所有 summary 和 metadata 中的路径必须与
+当前分类目录一致。
 
 在集中配置或 case registry 中显式保存结果类别与子类，不要在多个 runner
 分支中重复硬编码字符串。增加单元测试验证：
 
 - 每个 canonical case 恰好映射到一个合法结果路径；
-- 路径不得含时间戳之外的随机成分；
+- 相同 case 与执行模式始终映射到相同相对路径；
 - case 名和执行模式不得丢失；
 - 两个不同 case 不得映射到同一目录；
-- 新运行不能覆盖已存在目录；
+- 清理上一快照时保留 `.gitkeep`，且新结果中不得混入旧运行残留；
 - summary 中路径与实际目录一致。
 
 ## 三、serial 异质表面能
@@ -135,7 +138,7 @@ serial 异质表面能全部通过后再开始。固定使用 2 ranks 和 2×1×
 3. `pair_active_contact_migration`：已有非零物理 PFT/PFR 和 JKR state
    的接触迁移或发生 ownership reverse；
 4. `wall_cross_jkr`：颗粒跨 rank 后继续保持墙面接触；
-5. `cloud_collision_jkr`：小颗粒群 serial/dmp2 集成对照。
+5. `cloud_collision_jkr`：小颗粒群 serial/DMP 集成对照。
 
 不得用固定时间、固定 particle ID 或验证专用 history seed 修改生产物理。
 需要非零 PFT/PFR 时，应通过斜碰、滚动或持续接触自然形成。
@@ -148,7 +151,7 @@ serial 异质表面能全部通过后再开始。固定使用 2 ranks 和 2×1×
 - 比较轨迹、速度、角速度、力、接触集合、PFT、PFR 和 JKR state；
 - 检查接触不丢失、不重复、力不双算、ownership reverse 向量符号正确；
 - 特别观察 `mpi_unpack_des_mod.f` 邻居 fallback 分支的 neighbor 定位；
-- serial/dmp2 超差时报告第一个物理差异，而不是局部数组索引差异。
+- serial/DMP 超差时报告第一个物理差异，而不是局部数组索引差异。
 
 ## 五、restart 双精度边界诊断
 
@@ -182,7 +185,8 @@ serial 异质表面能全部通过后再开始。固定使用 2 ranks 和 2×1×
 
 - `docs/TEST_PROGRESS.md`；
 - `docs/VALIDATION.md`；
-- 本次时间戳目录的 `metadata.json`、`summary.csv` 和 `summary.json`。
+- `validation/results` 中的 `RUN_INFO.txt`、`metadata.json`、
+  `summary.csv` 和 `summary.json`。
 
 每阶段运行：
 

@@ -57,7 +57,7 @@
 - `dt <= T_H / 10000`；
 - 双精度 particle output、速度、角速度和 particle ID 输出开关存在。
 
-标准 case 提交到 `validation/cases`；运行器逐字节校验后复制到新的时间戳结果目录，因此不会在资产目录运行或覆盖历史证据。
+标准 case 提交到 `validation/cases`；运行器逐字节校验后复制到固定分类结果目录，因此不会在资产目录运行。每次运行生成一套新的可替换结果快照；旧结果由 Git commit、canonical case 和 solver hash 重新生成。
 
 普通 Hertz/JKR approach case 使用统一初始表面间距
 `0.05R = 5e-8 m`：wall 粒心 y=1.05 μm，pair 粒心
@@ -67,17 +67,17 @@ y=8.975/11.025 μm。restart 工况为了预先建立 PFT/PFR/state 历史，
 ### 2.3 结果目录组织
 
 后续新运行采用
-`validation/results/runs/<timestamp>/<测试类别>/<物理子类>/<case>/<执行模式>`
+`validation/results/<测试类别>/<物理子类>/<case>/<执行模式>`
 的层级。第一层使用 `contact_physics`、`dmp`、`restart`、
 `wall_geometry` 等测试类别；第二层区分 `pair_normal`、
 `pair_oblique`、`wall_normal`、`wall_oblique`、`pair_cross`
-等物理子类；最内层保存 `serial`、`dmp2`、`official`、
+等物理子类；最内层保存 `serial`、`dmp`、`official`、
 `migrated`、`continuous` 或 `restart1` 等执行模式。
 
-该结构继承 MFIX23 results 的可浏览性，同时保留 MFIX26 时间戳运行根目录、
-统一 metadata/summary 和不可覆盖历史证据的约束。既有结果目录不移动或
-回填；新布局只用于后续运行。完整目录示例和迁移验收条件见
-`docs/NEXT_STAGE_PROMPT.md`。
+该结构继承 MFIX23 results 的可浏览性。每次统一 runner 调用先清理上一份
+结果快照，再写入自洽的 `RUN_INFO.txt`、metadata 和 summary；`dmp` 仅表示
+DMP 执行方式，实际进程数在 metadata 中记录，下一阶段固定为 2 ranks。
+完整目录示例和迁移验收条件见 `docs/NEXT_STAGE_PROMPT.md`。
 
 ### 2.4 比较与容差原则
 
@@ -99,7 +99,7 @@ Float32 VTP 只用于轨迹和可视化，不能替代 restart 边界的双精�
 
 | 类别 | 工况 | 比较对象 | 主要指标 | 判据 | 状态 |
 |---|---|---|---|---|---|
-| Unit | JKR reference/case assets/plotting | 独立公式与生成器 | 关键点、临界速度、e=1 动态、34 个输入文件、四类图 | 67 个单元测试整体通过 | PASS |
+| Unit | JKR reference/case assets/plotting | 独立公式与生成器 | 关键点、临界速度、e=1 动态、34 个输入文件、四类图 | 72 个单元测试整体通过 | PASS |
 | Unit | case generation | 配置与生成文本 | 唯一关键字、粒子数、几何、dt、输出 | 任一前置检查失败即 FAIL | PASS |
 | Unit | I/O and comparison | 合成 CSV/monitor/VTP | 精度元数据、插值、global ID、pair ID | 重复/缺失/时间错位必须拒绝 | PASS |
 | A 原生保护 | pair Hertz normal | 官方 26.1.2 vs custom JKR-off | x、v、omega、重叠、碰撞力、末态 | 共同 VTP 帧及双精度末态完全一致 | PASS |
@@ -134,9 +134,9 @@ Float32 VTP 只用于轨迹和可视化，不能替代 restart 边界的双精�
 
 结果目录：
 
-`/home/yuxing/mfix/MfixVer26/validation/results/runs/20260822T151407.503647Z-5944/unit-tests.log`
+`/home/yuxing/mfix/MfixVer26/validation/results/unit/unit-tests.log`
 
-结果：67 tests，全部通过；覆盖 17 个 canonical case 的逐字节同步、15 个普通 approach case 的 0.05R 几何、e=1 理论捕获/回弹以及四类 contact PNG。
+结果：72 tests，全部通过；覆盖 17 个 canonical case 的逐字节同步、15 个普通 approach case 的 0.05R 几何、结果目录映射/清理、e=1 理论捕获/回弹以及四类 contact PNG。
 
 ### 4.2 原生 Hertz 保护
 
@@ -146,7 +146,7 @@ Float32 VTP 只用于轨迹和可视化，不能替代 restart 边界的双精�
 
 证据目录：
 
-`/home/yuxing/mfix/MfixVer26/validation/results/runs/20260822T135425.285145Z-2946`
+`/home/yuxing/mfix/MfixVer26/validation/results/contact_physics`
 
 对照双方使用逐字节相同的 stock-compatible `mfix.dat` 和
 `particle_input.dat`。输入保留 `des_coll_model='HERTZIAN'`、材料、网格、
@@ -180,9 +180,9 @@ Float32 VTP 只用于轨迹和可视化，不能替代 restart 边界的双精�
     python3 -m validation.generate_cases
 
 `validation/cases` 当前提交 17 个标准 case，每个目录仅含生成的
-`mfix.dat` 与 `particle_input.dat`。67 个单元测试会将这 34 个文件与
-当前生成器逐字节比较；运行器先执行同一同步检查，再复制到独立时间戳结果
-目录，不在 case 资产目录内运行或覆盖历史证据。
+`mfix.dat` 与 `particle_input.dat`。72 个单元测试会将这 34 个文件与
+当前生成器逐字节比较；运行器先执行同一同步检查，再复制到固定分类结果
+目录，不在 case 资产目录内运行。
 
 15 个普通 approach case 的初始间距均由集中数值配置显式传入并经单元测试
 逐一检查；wall/pair 均为 `0.05R`。两个 restart case 不属于 approach
@@ -196,7 +196,7 @@ adhesion-only critical speed；e=0.6 历史 normal case 已改名为
 自动临界搜索或自适应加密。
 
 统一 `all` 证据目录：
-`/home/yuxing/mfix/MfixVer26/validation/results/runs/20260822T151407.503647Z-5944`，
+`/home/yuxing/mfix/MfixVer26/validation/results`，
 unit、7 个 Hertz、8 个 JKR normal 和 2 个 restart case 共 18 项全部 PASS。
 
 | e=1 工况 | 速度因子 | 预期/结果 | 力最大绝对误差 (N) | 最大误差时间 (s) |
@@ -221,7 +221,7 @@ unit、7 个 Hertz、8 个 JKR normal 和 2 个 restart case 共 18 项全部 PA
 
 最终证据目录：
 
-`/home/yuxing/mfix/MfixVer26/validation/results/runs/20260822T114550.104470Z-132230`
+`/home/yuxing/mfix/MfixVer26/validation/results/restart`
 
 运行信息：
 
@@ -256,7 +256,7 @@ unit、7 个 Hertz、8 个 JKR normal 和 2 个 restart case 共 18 项全部 PA
 
 - 集中配置、17 个 Git 跟踪 canonical case、逐字节同步和运行时复制；
 - 独立 JKR 理论参考、CSV/monitor/VTP 读取和 global-ID 比较基础；
-- 不覆盖历史结果的统一运行入口与完整元数据；
+- 生成可替换结果快照的统一运行入口与完整元数据；
 - e=1 wall/pair 0.95× 捕获、1.05× 断颈回弹和四类 contact 图；
 - 对应 e=1 Hertz 纯弹性回弹，以及保留并改名的 e=0.6 damped case；
 - serial 颗粒对和斜碰墙面 RESTART_1 末态回归；

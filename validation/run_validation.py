@@ -57,7 +57,7 @@ CASES_ROOT = PROJECT_ROOT / "validation" / "cases"
 DEFAULT_SOLVER = PROJECT_ROOT / "code" / "build" / "mfixsolver"
 DEFAULT_NATIVE_WRAPPER = Path("/home/yuxing/miniforge3/envs/mfix-26.1.2/bin/mfixsolver")
 DEFAULT_NATIVE_MODULE = Path("/home/yuxing/miniforge3/envs/mfix-26.1.2/bin/mfixsolver.so")
-RESULTS_ROOT = PROJECT_ROOT / "validation" / "results" / "runs"
+RESULTS_ROOT = PROJECT_ROOT / "validation" / "results"
 
 
 def command_text(command: list[str]) -> str:
@@ -133,13 +133,67 @@ def environment_metadata(solver: Path) -> dict[str, Any]:
     }
 
 
-def timestamped_run_directory() -> Path:
-    stamp = datetime.datetime.now(datetime.timezone.utc).strftime(
-        "%Y%m%dT%H%M%S.%fZ"
+def clear_results_directory(results_root: Path) -> None:
+    """Remove the replaceable result snapshot while preserving .gitkeep."""
+    results_root.mkdir(parents=True, exist_ok=True)
+    for path in results_root.iterdir():
+        if path.name == ".gitkeep":
+            continue
+        if path.is_dir():
+            shutil.rmtree(path)
+        else:
+            path.unlink()
+
+
+def contact_physics_subcategory(case: CaseConfig) -> str:
+    participant = "wall" if case.wall_contact else "pair"
+    has_tangential_velocity = any(
+        abs(particle.velocity[0]) > 0.0
+        or abs(particle.velocity[2]) > 0.0
+        for particle in case.particles
     )
-    directory = RESULTS_ROOT / f"{stamp}-{os.getpid()}"
-    directory.mkdir(parents=True, exist_ok=False)
-    return directory
+    collision = "oblique" if has_tangential_velocity else "normal"
+    return f"{participant}_{collision}"
+
+
+def case_result_root(results_root: Path, case: CaseConfig) -> Path:
+    if case.category == "restart":
+        history = "wall_history" if case.wall_contact else "pair_history"
+        return results_root / "restart" / history / case.name
+    return (
+        results_root
+        / "contact_physics"
+        / contact_physics_subcategory(case)
+        / case.name
+    )
+
+
+def write_run_info(
+    path: Path,
+    suite: str,
+    metadata: dict[str, Any],
+) -> None:
+    git = metadata["jkr_git"]
+    solver = metadata["solver"]
+    execution = metadata["execution"]
+    lines = (
+        "MFIX 26.1.2 JKR validation result snapshot",
+        f"recorded_at_utc={datetime.datetime.now(datetime.timezone.utc).isoformat()}",
+        f"suite={suite}",
+        f"mfix_version={metadata['mfix_version']}",
+        f"git_commit={git['commit']}",
+        f"git_branch={git['branch']}",
+        f"git_dirty={git['dirty']}",
+        f"solver_path={solver['path']}",
+        f"solver_sha256={solver['sha256']}",
+        f"execution_mode={execution['mode']}",
+        f"mpi_processes={execution['mpi_processes']}",
+        f"partition={execution['partition']}",
+        "",
+        "This directory is a replaceable snapshot. Re-run the committed",
+        "validation code and canonical cases to reproduce it.",
+    )
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def run_solver(command: tuple[str, ...], case_directory: Path) -> tuple[bool, str]:
@@ -277,12 +331,11 @@ def run_hertz_case(
     native_wrapper: Path,
     native_module: Path,
     case: Any,
-    run_directory: Path,
+    case_root: Path,
     metadata: dict[str, Any],
 ) -> dict[str, Any]:
     material = material_config(case.material_profile)
     numerical = default_numerical_config()
-    case_root = run_directory / case.name
     official_directory = case_root / "official"
     migrated_directory = case_root / "migrated"
     for directory in (official_directory, migrated_directory):
@@ -493,7 +546,7 @@ def key_points_have_expected_signs(
 def run_normal_jkr_case(
     solver: Path,
     case: CaseConfig,
-    run_directory: Path,
+    case_directory: Path,
     metadata: dict[str, Any],
 ) -> dict[str, Any]:
     material = material_config(case.material_profile)
@@ -501,7 +554,6 @@ def run_normal_jkr_case(
     parameters = normal_contact_parameters(material, case.wall_contact)
     critical_speed = adhesion_only_critical_speed(parameters)
     expected_behavior = "capture" if case.name.endswith("capture") else "rebound"
-    case_directory = run_directory / case.name
     copy_canonical_case_asset(
         CASES_ROOT,
         case_directory,
@@ -645,13 +697,12 @@ def write_case_metadata(
 def run_restart_case(
     solver: Path,
     case: Any,
-    run_directory: Path,
+    case_root: Path,
     metadata: dict[str, Any],
 ) -> dict[str, Any]:
     material = default_material_config()
     numerical = default_numerical_config()
-    case_root = run_directory / case.name
-    case_root.mkdir()
+    case_root.mkdir(parents=True)
     write_case_metadata(case_root / "metadata.json", metadata, case)
     split_name = f"R26_{case.name.upper()}_SPLIT"
     copy_canonical_case_asset(
@@ -719,8 +770,9 @@ def run_restart_case(
     }
 
 
-def run_unit_suite(run_directory: Path) -> dict[str, Any]:
-    log_path = run_directory / "unit-tests.log"
+def run_unit_suite(unit_directory: Path) -> dict[str, Any]:
+    unit_directory.mkdir(parents=True, exist_ok=False)
+    log_path = unit_directory / "unit-tests.log"
     with log_path.open("w", encoding="utf-8") as log:
         completed = subprocess.run(
             [
@@ -746,16 +798,16 @@ def run_unit_suite(run_directory: Path) -> dict[str, Any]:
     }
 
 
-def write_summary(run_directory: Path, results: list[dict[str, Any]]) -> None:
+def write_summary(results_root: Path, results: list[dict[str, Any]]) -> None:
     payload = {
         "passed": all(result["passed"] for result in results),
         "results": results,
     }
-    (run_directory / "summary.json").write_text(
+    (results_root / "summary.json").write_text(
         json.dumps(payload, indent=2, sort_keys=True),
         encoding="utf-8",
     )
-    with (run_directory / "summary.csv").open(
+    with (results_root / "summary.csv").open(
         "w", newline="", encoding="utf-8"
     ) as stream:
         writer = csv.DictWriter(
@@ -812,63 +864,68 @@ def main() -> int:
             raise FileNotFoundError(
                 f"native solver module does not exist: {native_module}"
             )
-    run_directory = timestamped_run_directory()
+    clear_results_directory(RESULTS_ROOT)
     metadata = environment_metadata(solver)
-    (run_directory / "metadata.json").write_text(
+    (RESULTS_ROOT / "metadata.json").write_text(
         json.dumps(metadata, indent=2, sort_keys=True),
         encoding="utf-8",
     )
+    write_run_info(RESULTS_ROOT / "RUN_INFO.txt", arguments.suite, metadata)
     results = []
     if arguments.suite in {"unit", "all"}:
-        results.append(run_unit_suite(run_directory))
+        results.append(run_unit_suite(RESULTS_ROOT / "unit"))
     if arguments.suite in {"hertz", "all"}:
         for case in hertz_validation_cases():
+            case_root = case_result_root(RESULTS_ROOT, case)
             try:
                 results.append(run_hertz_case(
                     solver,
                     native_wrapper,
                     native_module,
                     case,
-                    run_directory,
+                    case_root,
                     metadata,
                 ))
             except Exception as error:
                 results.append({
                     "case": case.name,
                     "passed": False,
-                    "directory": str(run_directory / case.name),
+                    "directory": str(case_root),
                     "reason": f"{type(error).__name__}: {error}",
                 })
     if arguments.suite in {"serial", "all"}:
         for case in serial_jkr_validation_cases():
+            case_root = case_result_root(RESULTS_ROOT, case)
+            serial_directory = case_root / "serial"
             try:
                 results.append(
                     run_normal_jkr_case(
-                        solver, case, run_directory, metadata
+                        solver, case, serial_directory, metadata
                     )
                 )
             except Exception as error:
                 results.append({
                     "case": case.name,
                     "passed": False,
-                    "directory": str(run_directory / case.name),
+                    "directory": str(serial_directory),
                     "reason": f"{type(error).__name__}: {error}",
                 })
     if arguments.suite in {"restart", "all"}:
         for case in restart_case_configs(default_material_config()):
+            case_root = case_result_root(RESULTS_ROOT, case)
             try:
                 results.append(
-                    run_restart_case(solver, case, run_directory, metadata)
+                    run_restart_case(solver, case, case_root, metadata)
                 )
             except Exception as error:
                 results.append({
                     "case": case.name,
                     "passed": False,
-                    "directory": str(run_directory / case.name),
+                    "directory": str(case_root),
                     "reason": f"{type(error).__name__}: {error}",
                 })
-    write_summary(run_directory, results)
-    print(run_directory)
+    write_summary(RESULTS_ROOT, results)
+    print(RESULTS_ROOT)
     for result in results:
         print(f"{result['case']}: {'PASS' if result['passed'] else 'FAIL'}")
     return 0 if all(result["passed"] for result in results) else 1

@@ -9,9 +9,8 @@
 - 生产源码基线：`954ea0b9639592b9632c4f8fba92d23eabf42b99`。
 - 串行 solver SHA-256：`0e7a4e7e8fad556481bcb11bd76aed0508b180c7a5e0944aaca681dfc8a0ab6f`。
 - DMP solver SHA-256：`3523a0d4352431534f8576e905201c04abc7105ba6902f721552916a182ab26c`。
-- 最新统一全套证据：`/home/yuxing/mfix/MfixVer26/validation/results/runs/20260822T151407.503647Z-5944`（unit、7 Hertz、8 JKR normal、2 restart 共 18 项全部 PASS）。
-- 前一 restart 基线：`/home/yuxing/mfix/MfixVer26/validation/results/runs/20260822T095448.025415Z-107484`。
-- 已通过：67 个单元测试、17 个 canonical case 字节同步、7 个官方 MFIX26 Hertz 对照、8 个 serial JKR normal 工况、32 张 contact 图，以及既有 serial restart 回归。
+- 当前结果快照：`/home/yuxing/mfix/MfixVer26/validation/results`；每次统一运行替换该快照，`RUN_INFO.txt` 记录时间与版本。
+- 已通过：72 个单元测试、17 个 canonical case 字节同步、7 个官方 MFIX26 Hertz 对照、8 个 serial JKR normal 工况、32 张 contact 图，以及 serial restart 回归。
 
 ## 本轮目标与顺序
 
@@ -29,12 +28,14 @@
 
 - `contact_physics/pair_normal/pair_normal_capture/serial`；
 - `contact_physics/pair_normal/pair_gamma_low_high/serial`；
-- `dmp/pair_cross/pair_cross_jkr/{serial,dmp2}`；
+- `dmp/pair_cross/pair_cross_jkr/{serial,dmp}`；
 - `restart/pair_history/restart_pair_pfr/{continuous,restart1,restart2}`。
 
-最外层仍为不可覆盖的 `validation/results/runs/<timestamp>`。既有历史结果
-不移动、不改名；新布局只应用于后续运行。完整契约见
-`docs/NEXT_STAGE_PROMPT.md`。
+最外层固定为 `validation/results`。每次 runner 调用先清理上一份结果快照，
+再写入一套完整结果；需要复核旧结果时，从相应 Git commit、canonical case
+和已记录的 solver hash 重新运行。`dmp` 表示 DMP 执行方式，进程数不写入
+目录名，而在 `RUN_INFO.txt` 和 metadata 中显式记录；下一阶段固定为
+`mpi_processes=2`。完整契约见 `docs/NEXT_STAGE_PROMPT.md`。
 
 ## 当前判据
 
@@ -49,7 +50,7 @@
 
 | 阶段 | 状态 | 最近证据/阻塞 |
 |---|---|---|
-| 验证框架与统一 restart | PASS | 67 unit tests；restart 证据见当前基线 |
+| 验证框架与统一 restart | PASS | 72 unit tests；restart 证据见当前结果快照 |
 | canonical case 资产 | PASS | 17 case、34 个输入文件与集中生成器逐字节一致；15 个普通 approach case 均为 0.05R 初始间距 |
 | 文献和旧测试过程审查 | PASS | 4 篇直接相关论文复制到 `docs/references`，旧目录只读 |
 | 原生 Hertz 保护 | PASS | 3 个 e=0.6 原生保护和 4 个 e=1 对应速度 case；官方/迁移轨迹及双精度末态一致 |
