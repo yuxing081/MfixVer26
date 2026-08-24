@@ -8,7 +8,7 @@ MODULE READ_RES0_DES_MOD
    use des_thermo, only: des_t_s
    use discretelement
    use error_manager
-   use mpi_unpack_des, only: queue_pair_history
+   use mpi_unpack_des, only: jkr_diag_pair_event, queue_pair_history
    use geometry, only: no_k
    use mfix_pic, only: MPPIC, DES_STAT_WT
    use param, only: dimension_n_s
@@ -331,6 +331,15 @@ CONTAINS
                DO LC1=1,lDIMN
                   CALL READ_RES_pARRAY(lNEXT_REC,WALL_COLLISION_PFT(LC1,CC,:))
                   CALL READ_RES_pARRAY(lNEXT_REC,WALL_COLLISION_PFR(LC1,CC,:))
+               ENDDO
+               DO LL=1,MAX_PIP
+                  IF(WALL_COLLISION_FACET_ID(CC,LL) < 0) CYCLE
+                  CALL JKR_DIAG_PAIR_EVENT('restart_wall_read', &
+                     IGLOBAL_ID(LL),-1,WALL_COLLISION_FACET_ID(CC,LL), &
+                     CC,0D0,0D0,(/0D0,0D0,0D0/), &
+                     WALL_COLLISION_PFT(:,CC,LL), &
+                     WALL_COLLISION_PFR(:,CC,LL), &
+                     JKR_WALL_CONTACT_STATE(CC,LL))
                ENDDO
             ENDDO
             PFR_NEIGHBOR_OLD = PFR_NEIGHBOR

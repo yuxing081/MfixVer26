@@ -30,6 +30,7 @@ MODULE CALC_COLLISION_WALL
    USE geometry, only: kmax1, kmax2, kmin1, kmin2, zlength, xlength, ylength
    USE geometry, only: no_k, jmax1, jmax2, jmin1, jmin2
    USE geometry, only: cyclic_x, cyclic_y, cyclic_z
+   USE mpi_unpack_des, only: jkr_diag_pair_event
    USE param, only: dimension_i, dimension_j, dimension_k
    USE param1, only: half, one, small_number, undefined
    USE particles_in_cell_mod, only: particles_in_cell
@@ -663,6 +664,13 @@ CONTAINS
                FTAN = 0.0
             ENDIF
 
+            IF(USE_JKR .AND. JKR_FC_W_LOCAL > ZERO) &
+               CALL JKR_DIAG_PAIR_EVENT('wall_force_before', &
+                  IGLOBAL_ID(LL),-1,NF,CC_JKR,OVERLAP_N, &
+                  -DOT_PRODUCT(FNORM,NORMAL),FTAN,PFT_OLD, &
+                  WALL_COLLISION_PFR(:,CC_JKR,LL), &
+                  JKR_WALL_CONTACT_STATE(CC_JKR,LL))
+
 ! Store STL forces and torque
             STL_COLL_COUNT(NF) = STL_COLL_COUNT(NF) + 1.0
             VEL_MAG = DOT_PRODUCT(DES_VEL_NEW(LL,:), DES_VEL_NEW(LL,:))
@@ -739,6 +747,12 @@ CONTAINS
                MR_TORQUE_W(:) = -KR_JKR_W* &
                   CROSS(NORMAL(:),WALL_COLLISION_PFR(:,CC_JKR,LL))
                TOW(LL,:) = TOW(LL,:) + MR_TORQUE_W(:)
+               CALL JKR_DIAG_PAIR_EVENT('wall_force_after', &
+                  IGLOBAL_ID(LL),-1,NF,CC_JKR,OVERLAP_N, &
+                  -DOT_PRODUCT(FNORM,NORMAL),FTAN, &
+                  WALL_COLLISION_PFT(:,CC_JKR,LL), &
+                  WALL_COLLISION_PFR(:,CC_JKR,LL), &
+                  JKR_WALL_CONTACT_STATE(CC_JKR,LL))
             ELSE
                IF(MEW_RW>ZERO .AND. .NOT. GluedSphereDEM) THEN
                   OMEGA_MAG = sqrt(dot_product(OMEGA_NEW(LL,:),OMEGA_NEW(LL,:)))

@@ -34,6 +34,7 @@ MODULE DESGRID
    use discretelement, only: dimn
    use discretelement, only: xe, yn, zt
    use discretelement, only: iglobal_id
+   use discretelement, only: use_jkr
    use discretelement, only: remove_rogue_particles, rogue_particles_removed
    use error_manager, only: err_msg, loglevel_error, loglevel_info, loglevel_warning, log_message, ival
    use geometry, only: xlength, ylength, zlength, no_k
@@ -1112,11 +1113,17 @@ MODULE DESGRID
          ku_off = 1
 
          lcurpar_pos(:) = des_pos_new(lcurpar,:)
-! A half-cell can be skipped only when W/2 exceeds the maximum search
-! radius, 2*MAX_RADIUS*FACTOR_RLM.
-         IS_COARSE_DG_X = 1 > 4*MAX_RADIUS*FACTOR_RLM*DG_DXINV
-         IS_COARSE_DG_Y = 1 > 4*MAX_RADIUS*FACTOR_RLM*DG_DYINV
-         IS_COARSE_DG_Z = 1 > 4*MAX_RADIUS*FACTOR_RLM*DG_DZINV
+! A half-cell can be skipped only when W/2 exceeds the search radius.
+! Use the corrected JKR threshold and preserve official MFIX otherwise.
+         IF(USE_JKR) THEN
+            IS_COARSE_DG_X = 1 > 4*MAX_RADIUS*FACTOR_RLM*DG_DXINV
+            IS_COARSE_DG_Y = 1 > 4*MAX_RADIUS*FACTOR_RLM*DG_DYINV
+            IS_COARSE_DG_Z = 1 > 4*MAX_RADIUS*FACTOR_RLM*DG_DZINV
+         ELSE
+            IS_COARSE_DG_X = 1 > 2*MAX_RADIUS*FACTOR_RLM*DG_DXINV
+            IS_COARSE_DG_Y = 1 > 2*MAX_RADIUS*FACTOR_RLM*DG_DYINV
+            IS_COARSE_DG_Z = 1 > 2*MAX_RADIUS*FACTOR_RLM*DG_DZINV
+         ENDIF
 
          if (IS_COARSE_DG_X) then
             lcur_off = (lcurpar_pos(1)-dg_xstart)*dg_dxinv - &

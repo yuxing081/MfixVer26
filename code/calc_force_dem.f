@@ -31,6 +31,7 @@ CONTAINS
       USE discretelement
       USE geometry, only: cyclic_x, cyclic_y, cyclic_z
       USE geometry, only: xlength, ylength, zlength
+      USE mpi_unpack_des, ONLY: JKR_DIAG_PAIR_EVENT
       USE resize
       USE run
       use param1, only: half, one, small_number, zero, undefined
@@ -498,6 +499,12 @@ CONTAINS
                FT = 0.0
             ENDIF
 
+            IF(USE_JKR .AND. JKR_FC_LOCAL > ZERO) &
+               CALL JKR_DIAG_PAIR_EVENT('pair_force_before', &
+                  IGLOBAL_ID(LL),IGLOBAL_ID(I),-1,CC,OVERLAP_N, &
+                  -DOT_PRODUCT(FN,NORMAL),FT,PFT_NEIGHBOR(:,CC), &
+                  PFR_NEIGHBOR(:,CC),JKR_CONTACT_STATE(CC))
+
 ! Save tangential displacement history
             PFT_NEIGHBOR(:,CC) = OVERLAP_T(:)
             IF (RIGID_GSP .OR. GSP_IMPLICIT) THEN
@@ -669,6 +676,10 @@ CONTAINS
                TOW(I,2) = TOW(I,2) - MR_TORQUE(2)
 !$omp atomic
                TOW(I,3) = TOW(I,3) - MR_TORQUE(3)
+               CALL JKR_DIAG_PAIR_EVENT('pair_force_after', &
+                  IGLOBAL_ID(LL),IGLOBAL_ID(I),-1,CC,OVERLAP_N, &
+                  -DOT_PRODUCT(FN,NORMAL),FT,PFT_NEIGHBOR(:,CC), &
+                  PFR_NEIGHBOR(:,CC),JKR_CONTACT_STATE(CC))
             ELSE
             IF (.not. GluedSphereDEM) THEN
             if(MEW_R>ZERO) then

@@ -953,12 +953,16 @@
       INTEGER :: ENV_LENGTH,ENV_STATUS
 
       IF(.NOT.JKR_DIAG_CHECKED) THEN
+!$omp critical (jkr_diag_initialize)
+         IF(.NOT.JKR_DIAG_CHECKED) THEN
          ENV_VALUE = ''
          CALL GET_ENVIRONMENT_VARIABLE('MFIX_JKR_DIAGNOSTICS', &
             ENV_VALUE,ENV_LENGTH,ENV_STATUS)
          JKR_DIAG_ENABLED = ENV_STATUS == 0 .AND. ENV_LENGTH > 0 .AND. &
             TRIM(ENV_VALUE) /= '0'
          JKR_DIAG_CHECKED = .TRUE.
+         ENDIF
+!$omp end critical (jkr_diag_initialize)
       ENDIF
       JKR_DIAGNOSTICS_ACTIVE = JKR_DIAG_ENABLED
       END FUNCTION JKR_DIAGNOSTICS_ACTIVE
@@ -979,6 +983,7 @@
 
       IF(.NOT.JKR_DIAGNOSTICS_ACTIVE()) RETURN
 
+!$omp critical (jkr_diag_write)
       IF(JKR_DIAG_UNIT == -1) THEN
          WRITE(FILE_NAME,'("JKR_DIAGNOSTIC_rank",I4.4,".dat")') MYPE
          OPEN(NEWUNIT=JKR_DIAG_UNIT,FILE=TRIM(FILE_NAME), &
@@ -991,6 +996,7 @@
          NEIGH_GID,WALL_ID,LOCAL_SLOT,OVERLAP,NORMAL_FORCE, &
          TANGENTIAL_FORCE,PFT,PFR,STATE
       FLUSH(JKR_DIAG_UNIT)
+!$omp end critical (jkr_diag_write)
       END SUBROUTINE JKR_DIAG_PAIR_EVENT
 
       end module mpi_unpack_des

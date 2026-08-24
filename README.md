@@ -54,14 +54,16 @@ build/、solver、模块文件和运行输出均被 Git 忽略。不要在 conda
 
 验证只有一个 shell 入口；Python 运行器负责生成输入、创建独立结果目录、记录 Git/solver/编译器/参数元数据，并在任一必需测试失败时返回非零退出码：
 
-    cd /home/yuxing/mfix/MfixVer26
+    cd /home/yuxing/mfix/MfixVer26TestCases
     ./validation/run_validation.sh unit
     ./validation/run_validation.sh hertz
     ./validation/run_validation.sh serial
+    ./validation/run_validation.sh dmp
     ./validation/run_validation.sh restart
+    ./validation/run_validation.sh dmp_restart
     ./validation/run_validation.sh all
 
-当前已接入 `unit`、官方 stock 对照的串行 `hertz`、基础 JKR normal `serial` 与串行 `restart`；其余速度、几何和 DMP 套件按 `docs/VALIDATION.md` 的矩阵逐阶段接入，未运行项目不会标记为通过。
+当前已接入 `unit`、官方 stock 对照的串行 `hertz`、基础 JKR normal `serial`、固定两进程 `dmp`、串行 `restart` 和两进程 `dmp_restart`；未运行项目不会标记为通过。
 
 restart 套件对两颗粒和斜碰墙面分别运行：
 
@@ -69,7 +71,7 @@ restart 套件对两颗粒和斜碰墙面分别运行：
 2. split stage + RESTART_1；
 3. split stage + RESTART_2 敏感性负对照。
 
-RESTART_1 必须与 continuous 的双精度 `particle_output.csv` 逐字节一致。RESTART_2 是否不同单独记录，不作为正向通过条件。结果写入 `validation/results/runs/<UTC时间戳>-<pid>/`，永不复用固定目录。
+串行 RESTART_1 必须与 continuous 的双精度 `particle_output.csv` 逐字节一致。DMP RESTART_1 还要求边界 PFT/PFR/JKR state 双精度逐字段相等、global-ID 最终轨迹满足固定容差，并且误差不超过同工况 JKR-off Hertz 基线加绝对容差。RESTART_2 是否不同单独记录，不作为正向通过条件。每次 runner 调用替换 `validation/results/` 快照。
 
 完整测试顺序保持为原生 Hertz 保护、串行墙面/颗粒对、速度扫描、壁面几何、2-rank DMP、RESTART_1 和小颗粒群集成测试。正式结果写入 `docs/VALIDATION.md`，活动进度写入 `docs/TEST_PROGRESS.md`。
 
@@ -77,4 +79,4 @@ RESTART_1 必须与 continuous 的双精度 `particle_output.csv` 逐字节一�
 
 生产 code/ 保留 JKR 力学、PFT/PFR、JKR contact state、逐颗粒表面能、邻居/DMP/restart 生命周期所必需的逻辑。新增历史仿照 MFIX 官方 PFT 的保存、全局 ID 映射和恢复流程。
 
-能量统计、DES_USR_VAR(2:31)、人工 PFR seed、ghost/slot/force 导出和双精度边界快照只允许存在于 validation 的具体 case、jkr_tools 或显式验证 patch 中，不得无条件进入生产力计算。
+能量统计、DES_USR_VAR(2:31) 和人工 PFR seed 只允许存在于 validation。双精度边界诊断当前作为临时、默认关闭的通用生产钩子保留：仅设置 `MFIX_JKR_DIAGNOSTICS` 时写文件，无固定 case、时间或粒子 ID；完成验收后的验证专用构建迁移列为后续清理项。

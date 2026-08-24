@@ -2,7 +2,7 @@
 
 ## 当前状态
 
-- 阶段：第二阶段项目基线已建立；尚未修改生产物理。
+- 阶段：第五阶段固定 2-rank DMP restart 已验收；历史章节保留各阶段当时结论。
 - 模型范围：仅球形颗粒；SuperDEM/GSP 异形颗粒不做 JKR 适配。
 - restart 原则：采用 MFIX 26.1.2 官方修复和 global-ID 映射，PFR/JKR state/wall history 仿照官方 PFT 生命周期扩展，不自行开发另一套邻居 restart 映射。
 - 验证边界：能量统计、DES_USR_VAR(2:31) 和历史 seed 只放在 validation 的具体 case 或 analysis 工具中。
@@ -240,7 +240,7 @@ Restart 待办：26.1.2 read_res0_des.f 在 restart 中的 DES_USR_VAR 数量大
 - 基于 26.1.2 的 particle-owner packet 追加墙面 facet ID、PFT、PFR 和 JKR state；基于现有 11-field pair packet 发送 global owner/neighbor ID、网格位置、PFT、PFR 和 pair state。
 - pair history 不在 unpack 时猜测 CC，而是按 global-ID pair 暂存；官方邻居重建产生有效 CC 后再恢复。同向向量保持，反向 owner 映射时 PFT/PFR 取反，state 不取反。
 - `USE_JKR=.FALSE.` 时不发送新增 pair/wall 历史，保持官方 26.1.2 owner migration 路径。
-- DMP 粒子包容量在初始化时由墙面槽数固定。为避免某一 rank 动态扩容后产生不一致包布局，JKR DMP 在 8 个墙面 facet slot 全部耗尽时显式停止；串行仍保留官方动态扩容。该限制须在后续可配置容量设计中解除。
+- DMP 粒子包容量在初始化时由墙面槽数固定。为避免某一 rank 动态扩容后产生不一致包布局，JKR DMP 在 8 个墙面 facet slot 全部耗尽时显式停止；串行仍保留官方动态扩容。当前适用范围确认不会超过默认 8 槽，因此不要求扩展动态容量。
 
 | 日期 | 工况 | 结果 | 证据/边界 |
 | --- | --- | --- | --- |
@@ -312,9 +312,25 @@ Restart 待办：26.1.2 read_res0_des.f 在 restart 中的 DES_USR_VAR 数量大
 
 | 分类 | 当前决定 |
 | --- | --- |
-| 已迁移 | 球形颗粒–颗粒/墙面 Chen/JKR，负重叠颈部，PFT/PFR/滚动力矩，逐颗粒表面能，邻居重建，DMP owner packet，DES RES 2.0 RESTART_1 pair/wall history |
+| 已迁移 | 球形颗粒–颗粒/墙面 Chen/JKR，负重叠颈部，PFT/PFR/滚动力矩，逐颗粒表面能，邻居重建，DMP owner packet，DES RES 2.0 RESTART_1 pair/wall history，以及固定 2-rank/2×1×1 DMP restart 验收 |
 | 采用新版官方实现 | MFIX 26.1.2 `READ_PAR_COL`/global-ID collision map、RESTART_2 early return、粒子所有权与 ghost 框架、SuperDEM/GSP 原生代码路径；在其上仅追加 JKR 历史 |
-| 暂缓 | DMP continuous 与 RESTART_1 末态严格一致、不同 MPI 分解、所有方向的跨 rank 反向 owner 断点、DMP 墙面超过 8 facet slots、完整能量审计、团聚体长期/配位/重叠/restart 指标 |
+| 暂缓/范围外 | 不同 MPI 分解、所有方向的跨 rank 反向 owner 断点、超过默认 8 个 wall facet slots、完整能量审计、团聚体长期/配位/重叠/restart 指标，以及把临时诊断钩子迁到验证专用构建 |
 | 废弃 | 旧 23.4.1 JKR RES 1.3 直接兼容、旧式 `NEIGHBOR_INDEX` restart、旧 `read_res1` 缺陷修补、`cfnewvalues.f` 能量审计调用、生产代码中的 DES_USR_VAR(2:31) seed/诊断、旧 `read_namelist.f` 空白差异 |
 
-`USE_JKR=.FALSE.` 的串行 Hertz/墙面基准保持 MFIX 26.1.2 原生逐字节一致；DMP restart 的官方 1.2 基线非零差异已单列，不能据此把本项目 DMP restart 标记为完全验收。
+`USE_JKR=.FALSE.` 的串行 Hertz/墙面基准保持 MFIX 26.1.2 原生逐字节一致。DMP restart 不要求绕过 MFIX 26.1.2 自身的并行重排差异，而采用双重判据：JKR 边界历史必须精确相等，最终轨迹必须满足固定容差且不得差于同工况 JKR-off Hertz 基线加绝对容差。
+
+## 第五阶段：固定两进程 DMP restart 验收
+
+日期：2026-08-24。
+
+- `desgrid_mod.f` 的 `4*MAX_RADIUS*FACTOR_RLM` half-cell 判据现仅在 `USE_JKR=.TRUE.` 时启用；JKR-off 路径恢复 MFIX 26.1.2 官方 `2*MAX_RADIUS`，避免把 JKR 搜索修正扩散到原生 Hertz。
+- 在 pair 首次力计算前、wall restart 读回和 wall 首次力计算前补齐通用双精度诊断事件。诊断由 `MFIX_JKR_DIAGNOSTICS` 显式启用，初始化和文件写入受 OpenMP critical 保护；默认运行不创建诊断文件。
+- `dmp_restart` 对颗粒对和斜碰墙面分别运行 JKR 与 JKR-off Hertz 的 continuous、stage1、RESTART_1、RESTART_2，共 16 个两进程求解分支。VTP 仅用于按 global particle ID 对齐最终轨迹；PFT、PFR 和 JKR state 使用双精度内部事件精确比较。
+- wall history 保持 MFIX/当前迁移的默认固定 8 槽。当前适用范围明确假定单颗粒不会同时接触超过 8 个壁面，不为未预期工况引入动态 packet 布局。
+
+| 工况 | 边界历史 | JKR 最终态 | 相对 Hertz 基线 | 结果 |
+| --- | --- | --- | --- | --- |
+| `restart_pair_pfr`，2 ranks/2×1×1 | 1 个 global-ID pair 从 `unpack_queue`、pending restore、neighbor restore 到首次 force 的 PFT/PFR/state 精确相等 | 固定 DMP VTP 容差内；最大位置误差 `9.09e-13 m`、速度 `2.09e-5 m/s`、角速度 `28.60 rad/s`、碰撞力 `1.99e-12 N` | 全字段小于 Hertz 基线加绝对容差 | PASS |
+| `restart_wall_oblique`，2 ranks/2×1×1 | 1 个 `(particle_gid,facet_id)` 从 restart read 到首次 wall force 的 PFT/PFR/state 精确相等 | 四个比较字段末态误差均为 0 | 不差于零误差 Hertz 基线 | PASS |
+
+串行和 DMP solver 均重新编译通过；本阶段单元测试为 98 项通过、1 项因环境缺少 matplotlib 跳过。当前 solver SHA-256 分别为 `d5fc3f3b19d76e41ee28e7352d1eb1429c5dd8fdb256253f7426c62741008f82` 和 `4dd34b40f8ef677416c547cb5c00491d6466e911dd5d25c0c6b659a647d73d91`。诊断钩子属于为可重复验收保留的临时非物理改动；迁到验证专用构建后才能从生产覆盖文件删除。
