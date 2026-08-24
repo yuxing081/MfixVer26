@@ -17,14 +17,14 @@
 
 ## 本阶段顺序
 
-1. 定量验证颗粒对和颗粒–墙面的斜碰、滑动与滚动；比较 PFT/PFR、切向力、
-   滚动力矩、速度和角速度，不只检查趋势或 solver 退出码。
-2. 验证 wall single face、edge、corner 和 triangulated seam；检查接触计数、
+1. 已完成：定量验证颗粒对和颗粒–墙面的斜碰、滑动与滚动；独立公式、
+   PFT/PFR、切向力、重建滚动力矩、速度/角速度和 stick/slip 覆盖均通过。
+2. 当前：验证 wall single face、edge、corner 和 triangulated seam；检查接触计数、
    合力、facet identity，以及 PFT/PFR/state 在 facet 切换时的连续性。
 3. 建立 2×2×2、8-rank 颗粒群工况，与单核运行比较。使用两个计算域/网格
    尺度：cell width 分别位于 `2*DES search range` 阈值两侧；JKR 和
    JKR-off 原生 MFIX 分别进行 serial–DMP 对照。
-4. 前三项完成后再执行完整综合回归和阶段总结。
+4. 第 2、3 项完成后再执行完整综合回归和阶段总结。
 
 每项必须先定义固定参数和验收判据，再增加最小 case、独立比较和真实运行。
 完成一项后立即更新 `docs/MIGRATION.md`、`validation/docs/VALIDATION.md`、

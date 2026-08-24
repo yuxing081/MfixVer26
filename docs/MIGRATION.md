@@ -353,6 +353,29 @@ Restart 待办：26.1.2 read_res0_des.f 在 restart 中的 DES_USR_VAR 数量大
   `docs/NEXT_STAGE_PROMPT.md`，避免历史完成项与新待办混用。
 - 默认关闭的 `MFIX_JKR_DIAGNOSTICS` 暂不迁移。已有法向 capture/rebound
   与独立 JKR 参考覆盖负重叠颈部及临界断裂，不重复建立 tensile-neck case。
-- 当前实施顺序为定量斜碰/滑动/滚动、wall face/edge/corner/seam、以及
-  2×2×2 双尺度颗粒群 serial–DMP 对照。最后一项只比较同模型的串并行结果：
+- 已确定的实施顺序为定量斜碰/滑动/滚动、wall face/edge/corner/seam、以及
+  2×2×2 双尺度颗粒群 serial–DMP 对照；第一项现已完成。最后一项只比较
+  同模型的串并行结果：
   JKR 对 JKR、JKR-off 原生 MFIX 对 JKR-off，不要求两种物理模型彼此一致。
+
+## 第六阶段任务 1：定量斜碰、滑动与滚动
+
+日期：2026-08-24。
+
+- Validation 仓库新增 `tangential` suite 和两个 canonical case，分别覆盖
+  不等径颗粒对和颗粒–墙面的斜向运动、stick/slip、PFT/PFR、滚动饱和及
+  非零角速度响应；生产 Fortran、默认参数和默认关闭诊断均未修改。
+- 独立分析复现 `KT=8G*a`、Chen damping、JKR Coulomb 上限、滚动临界
+  位移与滚动刚度。不等径颗粒对的 damping 明确按 MFIX 相级参考质量
+  `REF_MASS/2` 计算；若误用实际粒子约化质量，会产生约 8% 的伪差异。
+- 颗粒对专用 case 仅把输入 `jkr_thetar_crit` 设为 `0.001`，以便在短时
+  受控工况中触发滚动上限；这不是生产默认值变更。
+
+| 工况 | stick/slip events | 最大切向力残差 | Coulomb/滚动最大比 | 结果 |
+| --- | ---: | ---: | ---: | --- |
+| `pair_oblique_sliding_rolling` | 3489/613 | `7.04e-21 N` | `1.0000000000000016 / 1.0000000000000004` | PASS |
+| `wall_oblique_sliding_rolling` | 81608/2247 | `1.53e-19 N` | `1.0000000000000018 / 1.0` | PASS |
+
+`python3 -m unittest discover -s tests -v` 共运行 106 项，其中 101 项通过，
+5 项因缺少可选 `matplotlib`/`fparser` 依赖跳过。下一项转入 wall
+face/edge/corner/triangulated seam。
