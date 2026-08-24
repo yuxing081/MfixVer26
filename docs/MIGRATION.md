@@ -333,4 +333,4 @@ Restart 待办：26.1.2 read_res0_des.f 在 restart 中的 DES_USR_VAR 数量大
 | `restart_pair_pfr`，2 ranks/2×1×1 | 1 个 global-ID pair 从 `unpack_queue`、pending restore、neighbor restore 到首次 force 的 PFT/PFR/state 精确相等 | 固定 DMP VTP 容差内；最大位置误差 `9.09e-13 m`、速度 `2.09e-5 m/s`、角速度 `28.60 rad/s`、碰撞力 `1.99e-12 N` | 全字段小于 Hertz 基线加绝对容差 | PASS |
 | `restart_wall_oblique`，2 ranks/2×1×1 | 1 个 `(particle_gid,facet_id)` 从 restart read 到首次 wall force 的 PFT/PFR/state 精确相等 | 四个比较字段末态误差均为 0 | 不差于零误差 Hertz 基线 | PASS |
 
-串行和 DMP solver 均重新编译通过；本阶段单元测试为 99 项通过、1 项因环境缺少 matplotlib 跳过。当前 solver SHA-256 分别为 `09feaa7786e257b932b2e1a022bf449c47be089ee55c28e12cd21a6e45502e70` 和 `6e1a05241cee6c301cb405f93f72bd99827abe1277a66d5add060b9df1576fb7`。诊断钩子属于为可重复验收保留的临时非物理改动；迁到验证专用构建后才能从生产覆盖文件删除。
+串行和 DMP solver 均重新编译通过；统一 runner 中 99 项单元测试全部通过。当前 solver SHA-256 分别为 `09feaa7786e257b932b2e1a022bf449c47be089ee55c28e12cd21a6e45502e70` 和 `6e1a05241cee6c301cb405f93f72bd99827abe1277a66d5add060b9df1576fb7`。诊断钩子属于为可重复验收保留的临时非物理改动；迁到验证专用构建后才能从生产覆盖文件删除。
