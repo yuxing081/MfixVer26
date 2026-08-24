@@ -127,6 +127,10 @@ CONTAINS
       DOUBLE PRECISION :: PFT_OLD(DIMN)
       DOUBLE PRECISION :: V_ROLL_W(3), XI_MAG_W, XI_CRIT_W, KR_JKR_W
       DOUBLE PRECISION :: MR_TORQUE_W(3)
+! Reject an exact duplicate JKR contact at a coplanar STL facet seam.
+      INTEGER :: CC_DUP, NF_DUP, EDGE_DUP
+      DOUBLE PRECISION :: CLOSEST_PT_DUP(DIMN), DUPLICATE_DISTANCE_SQ
+      LOGICAL :: POINT_OR_EDGE_DUP, DUPLICATE_COPLANAR_JKR
 ! equivalent rad of local contact curvature
       DOUBLE PRECISION :: eq_r,r_eff_bs,r_eff_sq
       DOUBLE PRECISION :: HERT_KwN_SUPER(DIM_M),HERT_KwT_SUPER(DIM_M)
@@ -178,7 +182,8 @@ CONTAINS
 !$omp    a_over_a0,a_jkr,cc_jkr,jkr_norm,jkr_a0_w_local,                  &
 !$omp    jkr_deltac_w_local,jkr_fc_w_local,jkr_gamma_w_local,             &
 !$omp    jkr_e_eff_w_local,pft_old,v_roll_w,xi_mag_w,xi_crit_w,           &
-!$omp    kr_jkr_w,mr_torque_w)                                            &
+!$omp    kr_jkr_w,mr_torque_w,cc_dup,nf_dup,edge_dup,closest_pt_dup,       &
+!$omp    duplicate_distance_sq,point_or_edge_dup,duplicate_coplanar_jkr)   &
 !$omp shared(max_pip,focus_particle,debug_des,                            &
 !$omp    pijk,dg_pijk,des_pos_new,omega_new,pmass,                        &
 !$omp    des_radius,facets_at_dg,vertex,mew_rw,                           &
@@ -475,6 +480,36 @@ CONTAINS
 ! unwanted collision with all triangle edges making up a large plane or
 ! surface with low curvature
             IF(point_or_edge_int.AND.IGNORE_STL_EDGE_INTERSECTION(NF, EDGE)) CYCLE
+
+! Exact points on a shared coplanar edge are classified as inside both
+! triangles by MFIX's strict barycentric tests.  Keep the first active JKR
+! facet so the internal triangulation seam does not double the wall force.
+            DUPLICATE_COPLANAR_JKR = .FALSE.
+            IF(USE_JKR .AND. JKR_FC_W_LOCAL > ZERO .AND. &
+               .NOT.SuperDEM) THEN
+               DO CC_DUP=1,SIZE(WALL_COLLISION_FACET_ID,1)
+                  NF_DUP = WALL_COLLISION_FACET_ID(CC_DUP,LL)
+                  IF(NF_DUP < 1 .OR. NF_DUP == NF) CYCLE
+                  IF(.NOT.JKR_WALL_CONTACT_STATE(CC_DUP,LL)) CYCLE
+                  IF(DOT_PRODUCT(NORM_FACE(:,NF),NORM_FACE(:,NF_DUP)) < &
+                     ONE-1.0D-12) CYCLE
+                  CALL ClosestPtPointTriangle(NF_DUP,DES_POS_NEW(LL,:), &
+                     VERTEX(:,:,NF_DUP),CLOSEST_PT_DUP(:), &
+                     POINT_OR_EDGE_DUP,EDGE_DUP)
+                  DUPLICATE_DISTANCE_SQ = DOT_PRODUCT( &
+                     CLOSEST_PT_DUP(:)-CLOSEST_PT(:), &
+                     CLOSEST_PT_DUP(:)-CLOSEST_PT(:))
+                  IF(DUPLICATE_DISTANCE_SQ <= &
+                     (1.0D-10*DES_RADIUS(LL))**2) THEN
+                     DUPLICATE_COPLANAR_JKR = .TRUE.
+                     EXIT
+                  ENDIF
+               ENDDO
+            ENDIF
+            IF(DUPLICATE_COPLANAR_JKR) THEN
+               CALL REMOVE_COLLISION(LL,NF,WALL_COLLISION_FACET_ID)
+               CYCLE
+            ENDIF
 
             MAX_DISTSQ = DISTSQ
             MAX_NF = NF

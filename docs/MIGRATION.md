@@ -354,7 +354,7 @@ Restart 待办：26.1.2 read_res0_des.f 在 restart 中的 DES_USR_VAR 数量大
 - 默认关闭的 `MFIX_JKR_DIAGNOSTICS` 暂不迁移。已有法向 capture/rebound
   与独立 JKR 参考覆盖负重叠颈部及临界断裂，不重复建立 tensile-neck case。
 - 已确定的实施顺序为定量斜碰/滑动/滚动、wall face/edge/corner/seam、以及
-  2×2×2 双尺度颗粒群 serial–DMP 对照；第一项现已完成。最后一项只比较
+  2×2×2 双尺度颗粒群 serial–DMP 对照；前两项现已完成。最后一项只比较
   同模型的串并行结果：
   JKR 对 JKR、JKR-off 原生 MFIX 对 JKR-off，不要求两种物理模型彼此一致。
 
@@ -379,3 +379,32 @@ Restart 待办：26.1.2 read_res0_des.f 在 restart 中的 DES_USR_VAR 数量大
 `python3 -m unittest discover -s tests -v` 共运行 106 项，其中 101 项通过，
 5 项因缺少可选 `matplotlib`/`fparser` 依赖跳过。下一项转入 wall
 face/edge/corner/triangulated seam。
+
+## 第六阶段任务 2：真实 STL 壁面几何
+
+日期：2026-08-24。
+
+- Validation 生成器新增可审查的 ASCII `geometry_0001.stl` 资产及
+  `wall_geometry` suite。single face、正交 edge、三面 corner 和两块共面
+  三角形 seam 均使用 `cartesian_grid=.True.`、`use_stl=.True.`，不再沿用
+  MFIX23 中实际为 box boundary 的同名 smoke case。
+- 初次 seam 运行在零重叠处同时报告 facet 1/2，两者标量 JKR 力完全相同，
+  VTP 合力约为独立单面理论值的两倍；face、edge、corner 分别正确报告
+  1、2、3 个物理贡献。这证明旧测试无法发现真实 STL 共面双计。
+- `calc_collision_wall_mod.f` 现仅在有效 JKR 分支中，对法向一致、最近点
+  相同且已有活动 JKR state 的共面 facet 保留第一项。正交法向不会合并，
+  `USE_JKR=.FALSE.` 不进入该逻辑，因此没有改变 MFIX26 原生 Hertz 路径。
+
+| 工况 | 活动 facet ID | 双精度标量力最大误差 | VTP 合力相对误差 | 结果 |
+| --- | --- | ---: | ---: | --- |
+| `wall_stl_single_face` | `[1]` | `3.02e-21 N` | `9.35e-5` | PASS |
+| `wall_stl_edge` | `[1,2]` | `3.02e-21 N` | `1.87e-4` | PASS |
+| `wall_stl_corner` | `[1,2,3]` | `3.02e-21 N` | `2.81e-4` | PASS |
+| `wall_stl_facet_seam` | `[1]` | `3.02e-21 N` | `9.35e-5` | PASS |
+
+串行和 DMP solver 均编译通过；110 项单元测试中 105 项通过、5 项因可选
+依赖缺失跳过；7 个官方 MFIX26 与迁移 solver 的 JKR-off Hertz 对照全部
+PASS。新 solver SHA-256 分别为
+`46c16ba38f63af4902e14f4c1e70403711a9d5f3ac7a0cb977c95ff2ac1fcbb6`
+和 `6578c5625953fc573879afd8ddecdf7fa12e89b172b055c067a0cd4418c74de1`。
+下一项为固定 2×2×2、8-rank 双尺度颗粒群 serial–DMP 对照。
