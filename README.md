@@ -21,7 +21,7 @@
 ## 目录
 
 - code/：相对于 MFIX 26.1.2 修改的生产 Fortran 源码；不放验证 seed 或 case 专用诊断。
-- ../MfixVer26TestCases/：独立 Git 仓库，拥有 validation cases、生成器、理论参考、测试、结果契约和验证文档。
+- validation/：嵌套的独立 Validation Git 仓库，拥有 cases、生成器、理论参考、测试、结果契约和验证文档；外层生产仓库整体忽略该目录。
 - 本仓库不跟踪 canonical 输入、验证脚本或运行结果，仅保留生产源码及其迁移说明。
 - docs/MIGRATION.md：生产源码的逐文件迁移决定与实现记录。
 - model/：当前已有的 MFIX 26.1.2 官方只读快照，不纳入本仓库版本控制。
@@ -54,14 +54,14 @@ build/、solver、模块文件和运行输出均被 Git 忽略。不要在 conda
 
 验证只有一个 shell 入口；Python 运行器负责生成输入、创建独立结果目录、记录 Git/solver/编译器/参数元数据，并在任一必需测试失败时返回非零退出码：
 
-    cd /home/yuxing/mfix/MfixVer26TestCases
-    ./validation/run_validation.sh unit
-    ./validation/run_validation.sh hertz
-    ./validation/run_validation.sh serial
-    ./validation/run_validation.sh dmp
-    ./validation/run_validation.sh restart
-    ./validation/run_validation.sh dmp_restart
-    ./validation/run_validation.sh all
+    cd /home/yuxing/mfix/MfixVer26/validation
+    ./run_validation.sh unit
+    ./run_validation.sh hertz
+    ./run_validation.sh serial
+    ./run_validation.sh dmp
+    ./run_validation.sh restart
+    ./run_validation.sh dmp_restart
+    ./run_validation.sh all
 
 当前已接入 `unit`、官方 stock 对照的串行 `hertz`、基础 JKR normal `serial`、固定两进程 `dmp`、串行 `restart` 和两进程 `dmp_restart`；未运行项目不会标记为通过。
 
