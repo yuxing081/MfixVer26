@@ -21,11 +21,8 @@
 ## 目录
 
 - code/：相对于 MFIX 26.1.2 修改的生产 Fortran 源码；不放验证 seed 或 case 专用诊断。
-- validation/cases/：按 particle_wall、particle_pair、wall_geometry、dmp 和 restart 分类；输入由集中配置在运行时生成。
-- validation/jkr_tools/：配置、case 生成、独立理论参考、I/O、比较和绘图工具。
-- validation/tests/：不依赖 solver 的单元测试。
-- validation/results/：每次运行的独立时间戳目录；大型输出默认不进入 Git。
-- docs/VALIDATION.md：正式验证设计、执行结果和限制文档。
+- ../MfixVer26TestCases/：独立 Git 仓库，拥有 validation cases、生成器、理论参考、测试、结果契约和验证文档。
+- 本仓库不跟踪 canonical 输入、验证脚本或运行结果，仅保留生产源码及其迁移说明。
 - docs/MIGRATION.md：生产源码的逐文件迁移决定与实现记录。
 - model/：当前已有的 MFIX 26.1.2 官方只读快照，不纳入本仓库版本控制。
 

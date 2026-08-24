@@ -2,8 +2,9 @@
 build/
 code/build/
 code/build*/
-validation/results/*
-!validation/results/.gitkeep
+/validation/
+/jkr_impact_graph.html
+/AGENTS.md
 
 # Solver executables and libraries
 mfixsolver
