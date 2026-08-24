@@ -314,7 +314,7 @@ Restart 待办：26.1.2 read_res0_des.f 在 restart 中的 DES_USR_VAR 数量大
 | --- | --- |
 | 已迁移 | 球形颗粒–颗粒/墙面 Chen/JKR，负重叠颈部，PFT/PFR/滚动力矩，逐颗粒表面能，邻居重建，DMP owner packet，DES RES 2.0 RESTART_1 pair/wall history，以及固定 2-rank/2×1×1 DMP restart 验收 |
 | 采用新版官方实现 | MFIX 26.1.2 `READ_PAR_COL`/global-ID collision map、RESTART_2 early return、粒子所有权与 ghost 框架、SuperDEM/GSP 原生代码路径；在其上仅追加 JKR 历史 |
-| 暂缓/范围外 | 不同 MPI 分解、所有方向的跨 rank 反向 owner 断点、超过默认 8 个 wall facet slots、完整能量审计、团聚体长期/配位/重叠/restart 指标，以及把临时诊断钩子迁到验证专用构建 |
+| 暂缓/范围外 | 通用不同 MPI 分解遍历、所有方向的跨 rank 反向 owner 断点、超过默认 8 个 wall facet slots、完整能量审计、团聚体长期/配位/重叠/restart 指标 |
 | 废弃 | 旧 23.4.1 JKR RES 1.3 直接兼容、旧式 `NEIGHBOR_INDEX` restart、旧 `read_res1` 缺陷修补、`cfnewvalues.f` 能量审计调用、生产代码中的 DES_USR_VAR(2:31) seed/诊断、旧 `read_namelist.f` 空白差异 |
 
 `USE_JKR=.FALSE.` 的串行 Hertz/墙面基准保持 MFIX 26.1.2 原生逐字节一致。DMP restart 不要求绕过 MFIX 26.1.2 自身的并行重排差异，而采用双重判据：JKR 边界历史必须精确相等，最终轨迹必须满足固定容差且不得差于同工况 JKR-off Hertz 基线加绝对容差。
@@ -333,7 +333,7 @@ Restart 待办：26.1.2 read_res0_des.f 在 restart 中的 DES_USR_VAR 数量大
 | `restart_pair_pfr`，2 ranks/2×1×1 | 1 个 global-ID pair 从 `unpack_queue`、pending restore、neighbor restore 到首次 force 的 PFT/PFR/state 精确相等 | 固定 DMP VTP 容差内；最大位置误差 `9.09e-13 m`、速度 `2.09e-5 m/s`、角速度 `28.60 rad/s`、碰撞力 `1.99e-12 N` | 全字段小于 Hertz 基线加绝对容差 | PASS |
 | `restart_wall_oblique`，2 ranks/2×1×1 | 1 个 `(particle_gid,facet_id)` 从 restart read 到首次 wall force 的 PFT/PFR/state 精确相等 | 四个比较字段末态误差均为 0 | 不差于零误差 Hertz 基线 | PASS |
 
-串行和 DMP solver 均重新编译通过；统一 runner 中 99 项单元测试全部通过。当前 solver SHA-256 分别为 `09feaa7786e257b932b2e1a022bf449c47be089ee55c28e12cd21a6e45502e70` 和 `6e1a05241cee6c301cb405f93f72bd99827abe1277a66d5add060b9df1576fb7`。诊断钩子属于为可重复验收保留的临时非物理改动；迁到验证专用构建后才能从生产覆盖文件删除。
+串行和 DMP solver 均重新编译通过；统一 runner 中 99 项单元测试全部通过。当前 solver SHA-256 分别为 `09feaa7786e257b932b2e1a022bf449c47be089ee55c28e12cd21a6e45502e70` 和 `6e1a05241cee6c301cb405f93f72bd99827abe1277a66d5add060b9df1576fb7`。诊断钩子属于为可重复验收保留的默认关闭、非物理改动；按当前决定暂不迁移。
 
 ## 仓库结构迁移
 
@@ -343,3 +343,16 @@ Restart 待办：26.1.2 read_res0_des.f 在 restart 中的 DES_USR_VAR 数量大
 - 原 `MfixVer26TestCases` 仓库连同 `.git` 整体移动到 `MfixVer26/validation`，再以普通 rename commit 将原内层 `validation/*` 扁平化到 Validation 仓库根。旧 commit ID 和历史保持不变。
 - Validation 仓库直接包含 `cases/`、`jkr_tools/`、`tests/`、`results/` 和运行脚本；`results/` 中仅 `.gitkeep` 被跟踪，计算结果继续保留但忽略。
 - 迁移前两个仓库的完整 bundle 保存于 `/home/yuxing/mfix/git-backups/2026-08-24-validation-layout/`，并已通过 `git bundle verify`。
+
+## 第六阶段范围确认
+
+日期：2026-08-24。
+
+- 已完成的异质表面能、固定 2-rank DMP 和 restart 边界计划归档为
+  `docs/archive/NEXT_STAGE_PROMPT_2026-08-23.md`；当前计划继续写在
+  `docs/NEXT_STAGE_PROMPT.md`，避免历史完成项与新待办混用。
+- 默认关闭的 `MFIX_JKR_DIAGNOSTICS` 暂不迁移。已有法向 capture/rebound
+  与独立 JKR 参考覆盖负重叠颈部及临界断裂，不重复建立 tensile-neck case。
+- 当前实施顺序为定量斜碰/滑动/滚动、wall face/edge/corner/seam、以及
+  2×2×2 双尺度颗粒群 serial–DMP 对照。最后一项只比较同模型的串并行结果：
+  JKR 对 JKR、JKR-off 原生 MFIX 对 JKR-off，不要求两种物理模型彼此一致。
