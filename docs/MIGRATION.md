@@ -354,7 +354,7 @@ Restart 待办：26.1.2 read_res0_des.f 在 restart 中的 DES_USR_VAR 数量大
 - 默认关闭的 `MFIX_JKR_DIAGNOSTICS` 暂不迁移。已有法向 capture/rebound
   与独立 JKR 参考覆盖负重叠颈部及临界断裂，不重复建立 tensile-neck case。
 - 已确定的实施顺序为定量斜碰/滑动/滚动、wall face/edge/corner/seam、以及
-  2×2×2 双尺度颗粒群 serial–DMP 对照；前两项现已完成。最后一项只比较
+  2×2×2 双尺度颗粒群 serial–DMP 对照；三项现均已完成。最后一项只比较
   同模型的串并行结果：
   JKR 对 JKR、JKR-off 原生 MFIX 对 JKR-off，不要求两种物理模型彼此一致。
 
@@ -407,4 +407,32 @@ face/edge/corner/triangulated seam。
 PASS。新 solver SHA-256 分别为
 `46c16ba38f63af4902e14f4c1e70403711a9d5f3ac7a0cb977c95ff2ac1fcbb6`
 和 `6578c5625953fc573879afd8ddecdf7fa12e89b172b055c067a0cd4418c74de1`。
-下一项为固定 2×2×2、8-rank 双尺度颗粒群 serial–DMP 对照。
+随后转入固定 2×2×2、8-rank 双尺度颗粒群 serial–DMP 对照，结果见下节。
+
+## 第六阶段任务 3：固定 8-rank 双尺度颗粒群
+
+日期：2026-08-24。
+
+- Validation 新增 `cloud_8rank` suite 和四个 canonical case，固定
+  8 ranks/2×2×2，不扫描其他 rank 或分解。每个 rank 初始一个粒子，四组
+  pair 跨 x 分区相向运动；serial 与 DMP 除 `nodesi/j/k` 外物理输入字节一致。
+- `R=1 μm`、`FACTOR_RLM=1.2` 时 DES search range 为 `2.4 μm`，两倍为
+  `4.8 μm`。低尺度 `W=3.333 μm` 位于 MFIX 官方系数 2 与 JKR 系数 4
+  判据之间；高尺度 `W=5.0 μm` 位于两者之上。
+- 低尺度采用确定性 half-cell 反例排列并交替 pair 的 global-ID 顺序。
+  JKR 的系数 4 路径保留四组接触且 serial/DMP 全字段相同；JKR-off 原始
+  系数 2 路径稳定复现 rank-dependent 接触集合差异。这一分支被显式标记为
+  负对照，PASS 表示预期缺陷出现，不表示原始路径一致。
+
+| 尺度/模型 | serial–DMP 结果 | 接触集合 | 最大绝对误差 x/v/omega/force | 验收 |
+| --- | --- | --- | --- | --- |
+| `3.333 μm` / JKR | 一致 | 四对相同 | `0 / 0 / 0 / 0` | PASS |
+| `3.333 μm` / JKR-off | 预期不一致 | `2.4000e-7 s`：serial 2 对、DMP 4 对 | `4.36e-7 / 1.0301 / 0 / 2.10e-7` | PASS（负对照） |
+| `5.0 μm` / JKR | 一致 | 四对相同 | `0 / 0 / 0 / 0` | PASS |
+| `5.0 μm` / JKR-off | 一致 | 四对相同 | `0 / 0 / 0 / 0` | PASS |
+
+JKR 两档和高尺度 JKR-off 均比较 101 帧、每字段 2424 个值，按 global ID
+对齐后的首次物理差异为空；初始 owner 覆盖 rank 0–7。四个工况日志无
+error、warning、abort、NaN 或 overflow。该专项为纯法向搜索判据工况，
+PFT/PFR 预期为零；非零切向历史的跨 owner 连续性由既有
+`pair_active_contact_migration` 和 DMP restart 双精度证据承担。

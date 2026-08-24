@@ -22,10 +22,10 @@
 2. 已完成：使用真实 ASCII STL 验证 wall single face、edge、corner 和
    triangulated seam；接触计数、合力、facet identity 与初始历史均通过，
    并修复 JKR 共面 seam 双计。
-3. 当前：建立 2×2×2、8-rank 颗粒群工况，与单核运行比较。使用两个计算域/网格
-   尺度：cell width 分别位于 `2*DES search range` 阈值两侧；JKR 和
-   JKR-off 原生 MFIX 分别进行 serial–DMP 对照。
-4. 第 3 项完成后再执行完整综合回归和阶段总结。
+3. 已完成：固定 2×2×2、8-rank 双尺度颗粒群。JKR 两尺度和高尺度
+   JKR-off 均与单核逐字段一致；低尺度 JKR-off 稳定复现原始系数 2 的
+   rank-dependent 漏接触负对照，直接证明 JKR 系数 4 修正有效。
+4. 当前：执行完整综合回归、统一所有文档状态并形成阶段总结。
 
 每项必须先定义固定参数和验收判据，再增加最小 case、独立比较和真实运行。
 完成一项后立即更新 `docs/MIGRATION.md`、`validation/docs/VALIDATION.md`、
@@ -43,3 +43,10 @@ cell width 必须小于其两倍，但仍落在 MFIX 官方系数 2 与 JKR 修�
 JKR-off DMP 比较。粒子按 global ID、接触按物理 pair ID 对齐，记录轨迹、
 接触集合、PFT/PFR/state、首次差异和最大误差；不得把 JKR 与 Hertz 的物理
 轨迹相互比较作为一致性要求。
+
+实际固定参数与结果：`W=3.333/5.0 μm`，DES search range 为 `2.4 μm`，
+两倍阈值为 `4.8 μm`。每个 case 初始 owner 覆盖 rank 0–7，并形成四组
+跨 x pair。低尺度 JKR-off 被定义为预期负对照：首次接触集合差异为
+serial 2 对、DMP 4 对；其余三项 serial–DMP 的 x/v/omega/force 最大误差
+均为零。该纯法向专项中 PFT/PFR 预期为零；非零历史由既有迁移/restart
+工况覆盖。
