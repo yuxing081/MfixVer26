@@ -324,7 +324,7 @@ Restart 待办：26.1.2 read_res0_des.f 在 restart 中的 DES_USR_VAR 数量大
 日期：2026-08-24。
 
 - `desgrid_mod.f` 的 `4*MAX_RADIUS*FACTOR_RLM` half-cell 判据现仅在 `USE_JKR=.TRUE.` 时启用；JKR-off 路径恢复 MFIX 26.1.2 官方 `2*MAX_RADIUS`，避免把 JKR 搜索修正扩散到原生 Hertz。
-- 在 pair 首次力计算前、wall restart 读回和 wall 首次力计算前补齐通用双精度诊断事件。诊断由 `MFIX_JKR_DIAGNOSTICS` 显式启用，初始化和文件写入受 OpenMP critical 保护；默认运行不创建诊断文件。
+- 在 pair 首次力计算前、wall restart 读回和 wall 首次力计算前补齐通用双精度诊断事件。wall 读回诊断只遍历与力循环一致的 `IS_NORMAL` 粒子，避免把 `MAX_PIP` 预分配空槽的未定义值误认作接触。诊断由 `MFIX_JKR_DIAGNOSTICS` 显式启用，初始化和文件写入受 OpenMP critical 保护；默认运行不创建诊断文件。
 - `dmp_restart` 对颗粒对和斜碰墙面分别运行 JKR 与 JKR-off Hertz 的 continuous、stage1、RESTART_1、RESTART_2，共 16 个两进程求解分支。VTP 仅用于按 global particle ID 对齐最终轨迹；PFT、PFR 和 JKR state 使用双精度内部事件精确比较。
 - wall history 保持 MFIX/当前迁移的默认固定 8 槽。当前适用范围明确假定单颗粒不会同时接触超过 8 个壁面，不为未预期工况引入动态 packet 布局。
 
@@ -333,4 +333,4 @@ Restart 待办：26.1.2 read_res0_des.f 在 restart 中的 DES_USR_VAR 数量大
 | `restart_pair_pfr`，2 ranks/2×1×1 | 1 个 global-ID pair 从 `unpack_queue`、pending restore、neighbor restore 到首次 force 的 PFT/PFR/state 精确相等 | 固定 DMP VTP 容差内；最大位置误差 `9.09e-13 m`、速度 `2.09e-5 m/s`、角速度 `28.60 rad/s`、碰撞力 `1.99e-12 N` | 全字段小于 Hertz 基线加绝对容差 | PASS |
 | `restart_wall_oblique`，2 ranks/2×1×1 | 1 个 `(particle_gid,facet_id)` 从 restart read 到首次 wall force 的 PFT/PFR/state 精确相等 | 四个比较字段末态误差均为 0 | 不差于零误差 Hertz 基线 | PASS |
 
-串行和 DMP solver 均重新编译通过；本阶段单元测试为 98 项通过、1 项因环境缺少 matplotlib 跳过。当前 solver SHA-256 分别为 `d5fc3f3b19d76e41ee28e7352d1eb1429c5dd8fdb256253f7426c62741008f82` 和 `4dd34b40f8ef677416c547cb5c00491d6466e911dd5d25c0c6b659a647d73d91`。诊断钩子属于为可重复验收保留的临时非物理改动；迁到验证专用构建后才能从生产覆盖文件删除。
+串行和 DMP solver 均重新编译通过；本阶段单元测试为 99 项通过、1 项因环境缺少 matplotlib 跳过。当前 solver SHA-256 分别为 `09feaa7786e257b932b2e1a022bf449c47be089ee55c28e12cd21a6e45502e70` 和 `6e1a05241cee6c301cb405f93f72bd99827abe1277a66d5add060b9df1576fb7`。诊断钩子属于为可重复验收保留的临时非物理改动；迁到验证专用构建后才能从生产覆盖文件删除。
