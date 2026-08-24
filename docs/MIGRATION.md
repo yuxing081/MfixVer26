@@ -425,13 +425,30 @@ facet 同样清零。MFIX 的 `IGNORE_STL_EDGE_INTERSECTION` 负责低曲率共�
 | `wall_stl_seam_pft_pfr` | facet 1→2 时 PFT/PFR 从 `1.340417e-9/-2.765676e-9 m` 变为 0；切向力相对跳变 `0.499738` | FAIL |
 | `wall_stl_seam_tensile_state` | 在 overlap `-4.190345e-10 m`（仍小于临界分离 `4.264973e-9 m`）跨缝，但目标 facet 无事件 | FAIL |
 
-失败机理已经由双精度事件和 VTP 几何共同确认：压缩接触的新 facet 会在当步
+失败机理由双精度事件和 VTP 几何共同确认：压缩接触的新 facet 会在当步
 重新置 `state=true`，所以单看布尔值会产生“连续”的假象；tensile 分支要求
-进入时已有 true state，新 slot 为 false，因而直接丢失 neck。本轮未改生产
-源码。下一步应优先复用 MFIX 原有 facet slot/删除生命周期，在确认是同一
-共面物理接触时原子地转移或重标记唯一权威 slot，而不是另建一套 history
-identity；随后必须验证静态 seam、动态 PFT/PFR/state、JKR-off、edge/corner、
-restart 和 DMP owner migration。
+进入时已有 true state，新 slot 为 false，因而直接丢失 neck。
+
+修复没有新增 history identity 或数组。`ClosestPtPointTriangle` 在旧 facet
+投影越过 MFIX 预处理标记的 ignored shared edge 时，会先把最近点设为
+`UNDEFINED`，原路径随后在距离检查中调用 `REMOVE_COLLISION`。现在仅对球形
+JKR 分支，在该删除发生前寻找唯一目标 facet；目标必须与旧 facet 同 BC、
+同 STL group、法向同向、共享边端点一致、当前投影位于目标面内、仍在 JKR
+接触范围内，且目标没有已有 slot。满足全部条件时只把旧 slot 的 FACET_ID
+重标记为目标 ID，PFT/PFR/state 保持原位；目标不唯一、edge/corner、不同
+wall、SuperDEM/GSP 和 JKR-off 均不进入迁移。
+
+| 修复后工况 | 观测 | 结果 |
+| --- | --- | --- |
+| `wall_stl_seam_pft_pfr` | PFT/PFR 跨 facet 逐位相等并复用 slot 8；切向力相对跳变从 `0.499738` 降为 `4.313026e-4` | PASS |
+| `wall_stl_seam_reverse_pft_pfr` | facet 2→1 反向跨缝同样逐位保留 PFT/PFR 和 slot 8，消除 `FACETS_AT_DG` 遍历顺序依赖 | PASS |
+| `wall_stl_seam_tensile_state` | 在 overlap `-4.190345e-10 m` 跨缝后 facet 2 事件存在且 state=true | PASS |
+
+静态 face/edge/corner/seam、7 个官方 MFIX26 JKR-off、固定 2-rank DMP
+owner migration/wall crossing、串行 restart、DMP restart 和最终 45/45
+综合回归全部通过。solver SHA-256 为 serial
+`12e2c449fb79c535661805309cb3b761831db26ea1b8f4a0aef66537c979ce5f`、DMP
+`2280fc89a73fcd42c4f4e1ebb6302ae246c55c4115d2bb3e077a2d2fe1a07187`。
 
 ## 第六阶段任务 3：固定 8-rank 双尺度颗粒群
 

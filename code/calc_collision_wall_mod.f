@@ -131,6 +131,7 @@ CONTAINS
       INTEGER :: CC_DUP, NF_DUP, EDGE_DUP
       DOUBLE PRECISION :: CLOSEST_PT_DUP(DIMN), DUPLICATE_DISTANCE_SQ
       LOGICAL :: POINT_OR_EDGE_DUP, DUPLICATE_COPLANAR_JKR
+      LOGICAL :: HISTORY_RETAGGED
 ! equivalent rad of local contact curvature
       DOUBLE PRECISION :: eq_r,r_eff_bs,r_eff_sq
       DOUBLE PRECISION :: HERT_KwN_SUPER(DIM_M),HERT_KwT_SUPER(DIM_M)
@@ -183,7 +184,8 @@ CONTAINS
 !$omp    jkr_deltac_w_local,jkr_fc_w_local,jkr_gamma_w_local,             &
 !$omp    jkr_e_eff_w_local,pft_old,v_roll_w,xi_mag_w,xi_crit_w,           &
 !$omp    kr_jkr_w,mr_torque_w,cc_dup,nf_dup,edge_dup,closest_pt_dup,       &
-!$omp    duplicate_distance_sq,point_or_edge_dup,duplicate_coplanar_jkr)   &
+!$omp    duplicate_distance_sq,point_or_edge_dup,duplicate_coplanar_jkr,   &
+!$omp    history_retagged)                                                  &
 !$omp shared(max_pip,focus_particle,debug_des,                            &
 !$omp    pijk,dg_pijk,des_pos_new,omega_new,pmass,                        &
 !$omp    des_radius,facets_at_dg,vertex,mew_rw,                           &
@@ -460,6 +462,21 @@ CONTAINS
                CALL ClosestPtPointTriangle(NF, pos_tmp,             &
                    VERTEX(:,:,NF), CLOSEST_PT(:),point_or_edge_int, edge)
 
+! MFIX marks the closest point as UNDEFINED outside a low-curvature shared
+! edge. Preserve an active JKR history before the ensuing distance rejection
+! clears its facet slot.
+               HISTORY_RETAGGED = .FALSE.
+               IF(USE_JKR .AND. JKR_FC_W_LOCAL > ZERO .AND. &
+                  .NOT.SuperDEM .AND. .NOT.GluedSphereDEM .AND. &
+                  POINT_OR_EDGE_INT .AND. &
+                  IGNORE_STL_EDGE_INTERSECTION(NF,EDGE)) THEN
+                  CALL RETAG_JKR_HISTORY_ACROSS_IGNORED_EDGE( &
+                     LL,NF,EDGE,CELL_ID,DES_RADIUS(LL)+ &
+                     JKR_ALPHA_SAFETY*JKR_DELTAC_W_LOCAL, &
+                     HISTORY_RETAGGED)
+                  IF(HISTORY_RETAGGED) CYCLE
+               ENDIF
+
                DIST(:) = CLOSEST_PT(:) - DES_POS_NEW(LL,:)
                DISTSQ = DOT_PRODUCT(DIST, DIST)
 
@@ -480,6 +497,14 @@ CONTAINS
 ! unwanted collision with all triangle edges making up a large plane or
 ! surface with low curvature
             IF(point_or_edge_int.AND.IGNORE_STL_EDGE_INTERSECTION(NF, EDGE)) CYCLE
+
+! FACETS_AT_DG is not distance sorted. If the new face is visited before the
+! old ignored-edge facet, retag the same authoritative slot from this side.
+            IF(USE_JKR .AND. JKR_FC_W_LOCAL > ZERO .AND. &
+               .NOT.SuperDEM .AND. .NOT.GluedSphereDEM .AND. &
+               .NOT.POINT_OR_EDGE_INT) THEN
+               CALL RETAG_JKR_HISTORY_TO_CURRENT_FACET(LL,NF)
+            ENDIF
 
 ! Exact points on a shared coplanar edge are classified as inside both
 ! triangles by MFIX's strict barycentric tests.  Keep the first active JKR
@@ -896,6 +921,182 @@ contains
 !$omp end critical (jkr_nr_warn_wall)
       NEWTON_RAPHSON_METHOD = X_NEW
       END FUNCTION NEWTON_RAPHSON_METHOD
+
+!......................................................................!
+!  Function: FACETS_SHARE_IGNORED_EDGE                                !
+!                                                                      !
+!  Purpose: Confirm that one MFIX-ignored edge is geometrically shared !
+!           by a coplanar neighbor before retagging wall history.      !
+!......................................................................!
+      LOGICAL FUNCTION FACETS_SHARE_IGNORED_EDGE( &
+         FACET_A,EDGE_A,FACET_B,RADIUS)
+
+      IMPLICIT NONE
+
+      INTEGER, INTENT(IN) :: FACET_A, EDGE_A, FACET_B
+      DOUBLE PRECISION, INTENT(IN) :: RADIUS
+      INTEGER :: A1, A2, B1, B2, EDGE_B
+      DOUBLE PRECISION :: TOLERANCE_SQ
+      DOUBLE PRECISION :: D11(DIMN), D12(DIMN), D21(DIMN), D22(DIMN)
+
+      FACETS_SHARE_IGNORED_EDGE = .FALSE.
+      IF(EDGE_A < 1 .OR. EDGE_A > 3) RETURN
+      IF(.NOT.IGNORE_STL_EDGE_INTERSECTION(FACET_A,EDGE_A)) RETURN
+
+      SELECT CASE(EDGE_A)
+      CASE(1)
+         A1 = 1
+         A2 = 2
+      CASE(2)
+         A1 = 1
+         A2 = 3
+      CASE(3)
+         A1 = 2
+         A2 = 3
+      END SELECT
+
+      TOLERANCE_SQ = (1.0D-10*RADIUS)**2
+      DO EDGE_B=1,3
+         IF(.NOT.IGNORE_STL_EDGE_INTERSECTION(FACET_B,EDGE_B)) CYCLE
+         SELECT CASE(EDGE_B)
+         CASE(1)
+            B1 = 1
+            B2 = 2
+         CASE(2)
+            B1 = 1
+            B2 = 3
+         CASE(3)
+            B1 = 2
+            B2 = 3
+         END SELECT
+         D11(:) = VERTEX(A1,:,FACET_A) - VERTEX(B1,:,FACET_B)
+         D12(:) = VERTEX(A1,:,FACET_A) - VERTEX(B2,:,FACET_B)
+         D21(:) = VERTEX(A2,:,FACET_A) - VERTEX(B1,:,FACET_B)
+         D22(:) = VERTEX(A2,:,FACET_A) - VERTEX(B2,:,FACET_B)
+         IF((DOT_PRODUCT(D11,D11) <= TOLERANCE_SQ .AND. &
+             DOT_PRODUCT(D22,D22) <= TOLERANCE_SQ) .OR. &
+            (DOT_PRODUCT(D12,D12) <= TOLERANCE_SQ .AND. &
+             DOT_PRODUCT(D21,D21) <= TOLERANCE_SQ)) THEN
+            FACETS_SHARE_IGNORED_EDGE = .TRUE.
+            RETURN
+         ENDIF
+      ENDDO
+
+      END FUNCTION FACETS_SHARE_IGNORED_EDGE
+
+!......................................................................!
+!  Subroutine: RETAG_JKR_HISTORY_ACROSS_IGNORED_EDGE                  !
+!                                                                      !
+!  Purpose: Reuse one existing MFIX facet slot when its physical wall !
+!           contact crosses to one unique coplanar neighbor.           !
+!......................................................................!
+      SUBROUTINE RETAG_JKR_HISTORY_ACROSS_IGNORED_EDGE( &
+         LLL,FACET_OLD,EDGE_OLD,DG_CELL,MAX_DISTANCE,RETAGGED)
+
+      IMPLICIT NONE
+
+      INTEGER, INTENT(IN) :: LLL, FACET_OLD, EDGE_OLD, DG_CELL
+      DOUBLE PRECISION, INTENT(IN) :: MAX_DISTANCE
+      LOGICAL, INTENT(OUT) :: RETAGGED
+      INTEGER :: CC, LC, FACET_NEW, TARGET_FACET, TARGET_COUNT
+      INTEGER :: TARGET_EDGE, TARGET_SLOT
+      DOUBLE PRECISION :: TARGET_POINT(DIMN), TARGET_DIST(DIMN)
+      LOGICAL :: TARGET_POINT_OR_EDGE, TARGET_SLOT_EXISTS
+
+      RETAGGED = .FALSE.
+      CC = 0
+      DO LC=1,SIZE(WALL_COLLISION_FACET_ID,1)
+         IF(WALL_COLLISION_FACET_ID(LC,LLL) == FACET_OLD .AND. &
+            JKR_WALL_CONTACT_STATE(LC,LLL)) THEN
+            CC = LC
+            EXIT
+         ENDIF
+      ENDDO
+      IF(CC == 0) RETURN
+
+      TARGET_FACET = -1
+      TARGET_COUNT = 0
+      DO LC=1,FACETS_AT_DG(DG_CELL)%COUNT
+         FACET_NEW = FACETS_AT_DG(DG_CELL)%ID(LC)
+         IF(FACET_NEW == FACET_OLD) CYCLE
+         IF(BC_ID_STL_FACE(FACET_NEW) /= &
+            BC_ID_STL_FACE(FACET_OLD)) CYCLE
+         IF(STL_GROUP_ID(FACET_NEW) /= STL_GROUP_ID(FACET_OLD)) CYCLE
+         IF(DOT_PRODUCT(NORM_FACE(:,FACET_NEW), &
+            NORM_FACE(:,FACET_OLD)) < ONE-1.0D-12) CYCLE
+         IF(.NOT.FACETS_SHARE_IGNORED_EDGE( &
+            FACET_OLD,EDGE_OLD,FACET_NEW,DES_RADIUS(LLL))) CYCLE
+
+         CALL ClosestPtPointTriangle(FACET_NEW,DES_POS_NEW(LLL,:), &
+            VERTEX(:,:,FACET_NEW),TARGET_POINT(:), &
+            TARGET_POINT_OR_EDGE,TARGET_EDGE)
+         IF(TARGET_POINT_OR_EDGE) CYCLE
+         TARGET_DIST(:) = TARGET_POINT(:) - DES_POS_NEW(LLL,:)
+         IF(DOT_PRODUCT(TARGET_DIST,TARGET_DIST) > MAX_DISTANCE**2) CYCLE
+
+         TARGET_SLOT_EXISTS = .FALSE.
+         DO TARGET_SLOT=1,SIZE(WALL_COLLISION_FACET_ID,1)
+            IF(WALL_COLLISION_FACET_ID(TARGET_SLOT,LLL) == FACET_NEW) THEN
+               TARGET_SLOT_EXISTS = .TRUE.
+               EXIT
+            ENDIF
+         ENDDO
+         IF(TARGET_SLOT_EXISTS) CYCLE
+         TARGET_COUNT = TARGET_COUNT + 1
+         TARGET_FACET = FACET_NEW
+      ENDDO
+      IF(TARGET_COUNT /= 1) RETURN
+
+      WALL_COLLISION_FACET_ID(CC,LLL) = TARGET_FACET
+      RETAGGED = .TRUE.
+
+      END SUBROUTINE RETAG_JKR_HISTORY_ACROSS_IGNORED_EDGE
+
+!......................................................................!
+!  Subroutine: RETAG_JKR_HISTORY_TO_CURRENT_FACET                     !
+!                                                                      !
+!  Purpose: Preserve the same slot when the new face is visited before!
+!           its old ignored-edge neighbor.                             !
+!......................................................................!
+      SUBROUTINE RETAG_JKR_HISTORY_TO_CURRENT_FACET(LLL,FACET_NEW)
+
+      IMPLICIT NONE
+
+      INTEGER, INTENT(IN) :: LLL, FACET_NEW
+      INTEGER :: CC, FACET_OLD, OLD_EDGE, SOURCE_SLOT, SOURCE_COUNT
+      DOUBLE PRECISION :: OLD_POINT(DIMN)
+      LOGICAL :: OLD_POINT_OR_EDGE
+
+      DO CC=1,SIZE(WALL_COLLISION_FACET_ID,1)
+         IF(WALL_COLLISION_FACET_ID(CC,LLL) == FACET_NEW) RETURN
+      ENDDO
+
+      SOURCE_SLOT = 0
+      SOURCE_COUNT = 0
+      DO CC=1,SIZE(WALL_COLLISION_FACET_ID,1)
+         FACET_OLD = WALL_COLLISION_FACET_ID(CC,LLL)
+         IF(FACET_OLD < 1 .OR. FACET_OLD == FACET_NEW) CYCLE
+         IF(.NOT.JKR_WALL_CONTACT_STATE(CC,LLL)) CYCLE
+         IF(BC_ID_STL_FACE(FACET_OLD) /= &
+            BC_ID_STL_FACE(FACET_NEW)) CYCLE
+         IF(STL_GROUP_ID(FACET_OLD) /= STL_GROUP_ID(FACET_NEW)) CYCLE
+         IF(DOT_PRODUCT(NORM_FACE(:,FACET_OLD), &
+            NORM_FACE(:,FACET_NEW)) < ONE-1.0D-12) CYCLE
+         CALL ClosestPtPointTriangle(FACET_OLD,DES_POS_NEW(LLL,:), &
+            VERTEX(:,:,FACET_OLD),OLD_POINT(:), &
+            OLD_POINT_OR_EDGE,OLD_EDGE)
+         IF(.NOT.OLD_POINT_OR_EDGE) CYCLE
+         IF(.NOT.IGNORE_STL_EDGE_INTERSECTION(FACET_OLD,OLD_EDGE)) CYCLE
+         IF(.NOT.FACETS_SHARE_IGNORED_EDGE( &
+            FACET_OLD,OLD_EDGE,FACET_NEW,DES_RADIUS(LLL))) CYCLE
+         SOURCE_COUNT = SOURCE_COUNT + 1
+         SOURCE_SLOT = CC
+      ENDDO
+      IF(SOURCE_COUNT /= 1) RETURN
+
+      WALL_COLLISION_FACET_ID(SOURCE_SLOT,LLL) = FACET_NEW
+
+      END SUBROUTINE RETAG_JKR_HISTORY_TO_CURRENT_FACET
 
 !......................................................................!
 !  Function: GET_COLLISION                                             !
