@@ -2,6 +2,10 @@
 
 更新日期：2026-08-24。
 
+原生 MFIX 的共面 STL facet 历史重置和半网格邻居剪枝阈值问题，以及当前
+仅限 JKR 的修复范围，见
+[`MFIX_UPSTREAM_LIMITATIONS.md`](MFIX_UPSTREAM_LIMITATIONS.md)。
+
 旧的异质表面能、固定 2-rank DMP 和 restart 边界实施计划已完成并归档到
 `docs/archive/NEXT_STAGE_PROMPT_2026-08-23.md`。开始工作前检查生产仓库与
 嵌套 `validation/` 仓库的实际 Git 状态，不得重置或覆盖用户修改。
@@ -27,13 +31,13 @@
 3. 已完成：固定 2×2×2、8-rank 双尺度颗粒群。JKR 两尺度和高尺度
    JKR-off 均与单核逐字段一致；低尺度 JKR-off 稳定复现原始系数 2 的
    rank-dependent 漏接触负对照，直接证明 JKR 系数 4 修正有效。
-4. 已完成：`./run_validation.sh all` 共 42/42 PASS；117 项 unit 中
-   113 PASS、4 个可选 `fparser` 测试跳过。两个仓库的结果来源 commit
-   均为 clean。
-5. 已完成：`./run_validation.sh wall_seam_history` 3/3 PASS，覆盖 facet
-   1→2、2→1 和 tensile state；静态 wall
+4. 已完成：`./run_validation.sh wall_seam_history` 4/4 PASS；新增 JKR-off
+   Hertz 负对照定量复现 facet 1→2 时 PFT 从 `3.103046e-9 m` 重置为零，
+   三个 JKR 工况继续覆盖 1→2、2→1 和 tensile state。
+5. 已完成：静态 wall
    geometry、7 个官方 JKR-off、固定 2-rank DMP owner migration、串行/DMP
-   restart 均通过，新增覆盖后的 `./run_validation.sh all` 为 45/45 PASS。
+   restart 均通过；新增覆盖后的 `./run_validation.sh all` 为 46/46 PASS，
+   125 项 unit 中 121 PASS、4 个可选 `fparser` 测试跳过。
 
 前述阶段工作已完成。仍明确不在当前验收范围的是：
 更多 rank/空间分解遍历、超过默认 8 个 wall history slots、SuperDEM/GSP、

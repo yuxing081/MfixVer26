@@ -30,7 +30,7 @@ MODULE CALC_COLLISION_WALL
    USE geometry, only: kmax1, kmax2, kmin1, kmin2, zlength, xlength, ylength
    USE geometry, only: no_k, jmax1, jmax2, jmin1, jmin2
    USE geometry, only: cyclic_x, cyclic_y, cyclic_z
-   USE mpi_unpack_des, only: jkr_diag_pair_event
+   USE mpi_unpack_des, only: jkr_diag_pair_event, jkr_diagnostics_active
    USE param, only: dimension_i, dimension_j, dimension_k
    USE param1, only: half, one, small_number, undefined
    USE particles_in_cell_mod, only: particles_in_cell
@@ -724,7 +724,7 @@ CONTAINS
                FTAN = 0.0
             ENDIF
 
-            IF(USE_JKR .AND. JKR_FC_W_LOCAL > ZERO) &
+            IF(JKR_DIAGNOSTICS_ACTIVE()) &
                CALL JKR_DIAG_PAIR_EVENT('wall_force_before', &
                   IGLOBAL_ID(LL),-1,NF,CC_JKR,OVERLAP_N, &
                   -DOT_PRODUCT(FNORM,NORMAL),FTAN,PFT_OLD, &
@@ -821,6 +821,13 @@ CONTAINS
                     TOW(LL,:) = TOW(LL,:) + RFTOW
                   endif
                ENDIF
+               IF(JKR_DIAGNOSTICS_ACTIVE()) &
+                  CALL JKR_DIAG_PAIR_EVENT('wall_force_after', &
+                     IGLOBAL_ID(LL),-1,NF,CC_JKR,OVERLAP_N, &
+                     -DOT_PRODUCT(FNORM,NORMAL),FTAN, &
+                     WALL_COLLISION_PFT(:,CC_JKR,LL), &
+                     WALL_COLLISION_PFR(:,CC_JKR,LL), &
+                     JKR_WALL_CONTACT_STATE(CC_JKR,LL))
             ENDIF
 
        ENDDO ! end of wall search iteration

@@ -1,5 +1,8 @@
 # JKR 向 MFIX 26.1.2 迁移记录
 
+原生 MFIX 已由源码和负对照确认的限制，以及本项目的修复边界，集中记录在
+[`MFIX_UPSTREAM_LIMITATIONS.md`](MFIX_UPSTREAM_LIMITATIONS.md)。
+
 ## 当前状态
 
 - 阶段：第五阶段固定 2-rank DMP restart 已验收；历史章节保留各阶段当时结论。
@@ -495,3 +498,26 @@ PFT/PFR 预期为零；非零切向历史的跨 owner 连续性由既有
   `46c16ba38f63af4902e14f4c1e70403711a9d5f3ac7a0cb977c95ff2ac1fcbb6`
   和 DMP
   `6578c5625953fc573879afd8ddecdf7fa12e89b172b055c067a0cd4418c74de1`。
+
+## 第六阶段补充：原生 Hertz 共面 seam 负对照
+
+日期：2026-08-24。
+
+- 新增 `wall_stl_seam_hertz_pft_reset`，与正向 JKR seam case 使用相同的
+  两个共面三角面、初始位置和非零切向速度，只关闭 JKR。
+- 为取得原生 PFT 的双精度边界值，默认关闭的诊断钩子在环境变量显式启用
+  时也记录 JKR-off wall `before/after` 事件；接触力、历史更新和默认关闭
+  行为未改变。
+- facet 1 最后一个 `after` 事件的 `|PFT|` 为
+  `3.1030462688305876e-9 m`；facet 2 第一个 `before` 事件为零，保留比例为
+  0。该 PASS 是原生缺陷负对照，不是物理连续性通过。
+- 新增用例后 `./run_validation.sh all` 为 46/46 PASS；125 项 unit tests 中
+  121 PASS、4 项可选 `fparser` 跳过；81 份 solver 日志未发现
+  error、warning、abort、NaN 或 overflow。
+- 当前 solver SHA-256 为 serial
+  `003c6d16a93b58befd247bc1e831f67a44751fc23a9cfe9ca811b454e74ef980`
+  和 DMP
+  `cf92a9b9e9b6bc75d8c40062ca5d9c156b6c45530c249b193471c48689c785c7`。
+
+两项 MFIX 原生不足的物理过程、源文件和行号统一见
+[`MFIX_UPSTREAM_LIMITATIONS.md`](MFIX_UPSTREAM_LIMITATIONS.md)。
