@@ -409,6 +409,30 @@ PASS。新 solver SHA-256 分别为
 和 `6578c5625953fc573879afd8ddecdf7fa12e89b172b055c067a0cd4418c74de1`。
 随后转入固定 2×2×2、8-rank 双尺度颗粒群 serial–DMP 对照，结果见下节。
 
+## 第六阶段补充：动态共面 facet 的物理历史
+
+日期：2026-08-24。
+
+新增两个真实 STL 动态工况后，静态 seam 的“单次受力不重复”结论不能外推
+为“同一物理接触跨 facet 连续”。当前 MFIX wall history 机制以
+`WALL_COLLISION_FACET_ID` 为 identity：`GET_COLLISION` 未找到新 facet 时会
+分配或复用 slot，并把 PFT/PFR/state 清零；`REMOVE_COLLISION` 对离开的旧
+facet 同样清零。MFIX 的 `IGNORE_STL_EDGE_INTERSECTION` 负责低曲率共享边的
+几何过滤，现有 JKR 共面去重负责 seam 点上的单次受力，两者都不迁移历史。
+
+| 工况 | 观测 | 结果 |
+| --- | --- | --- |
+| `wall_stl_seam_pft_pfr` | facet 1→2 时 PFT/PFR 从 `1.340417e-9/-2.765676e-9 m` 变为 0；切向力相对跳变 `0.499738` | FAIL |
+| `wall_stl_seam_tensile_state` | 在 overlap `-4.190345e-10 m`（仍小于临界分离 `4.264973e-9 m`）跨缝，但目标 facet 无事件 | FAIL |
+
+失败机理已经由双精度事件和 VTP 几何共同确认：压缩接触的新 facet 会在当步
+重新置 `state=true`，所以单看布尔值会产生“连续”的假象；tensile 分支要求
+进入时已有 true state，新 slot 为 false，因而直接丢失 neck。本轮未改生产
+源码。下一步应优先复用 MFIX 原有 facet slot/删除生命周期，在确认是同一
+共面物理接触时原子地转移或重标记唯一权威 slot，而不是另建一套 history
+identity；随后必须验证静态 seam、动态 PFT/PFR/state、JKR-off、edge/corner、
+restart 和 DMP owner migration。
+
 ## 第六阶段任务 3：固定 8-rank 双尺度颗粒群
 
 日期：2026-08-24。

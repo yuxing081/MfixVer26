@@ -14,6 +14,9 @@
   `MFIX_JKR_DIAGNOSTICS` 显式启用，默认关闭，本阶段暂不移动。
 - 法向 capture/rebound 已与独立 JKR 理论比较，不重复增加 tensile-neck
   法向测试。
+- 静态 true-STL seam 已证明不重复受力，但新增动态工况已证明 facet 1→2
+  时 PFT/PFR 被清零，tensile JKR neck 也会因目标 facet 的新 state=false
+  而丢失；当前生产物理尚未修复。
 
 ## 本阶段顺序
 
@@ -28,8 +31,11 @@
 4. 已完成：`./run_validation.sh all` 共 42/42 PASS；117 项 unit 中
    113 PASS、4 个可选 `fparser` 测试跳过。两个仓库的结果来源 commit
    均为 clean。
+5. 当前阻塞：`./run_validation.sh wall_seam_history` 的两个动态共面 seam
+   工况均 FAIL。先按 MFIX-first 原则修复唯一 facet-slot 历史的连续迁移，
+   再执行 JKR-off、静态几何、restart、DMP 与新的完整回归。
 
-本文件列出的本阶段工作已全部完成。后续仍明确不在当前验收范围的内容为：
+除动态 seam history 外，前述阶段工作已完成。仍明确不在当前验收范围的是：
 更多 rank/空间分解遍历、超过默认 8 个 wall history slots、SuperDEM/GSP、
 能量分解，以及自动临界速度搜索；除非用户另行扩展范围，不将其恢复为
 当前待办。
