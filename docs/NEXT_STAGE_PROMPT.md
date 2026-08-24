@@ -25,7 +25,14 @@
 3. 已完成：固定 2×2×2、8-rank 双尺度颗粒群。JKR 两尺度和高尺度
    JKR-off 均与单核逐字段一致；低尺度 JKR-off 稳定复现原始系数 2 的
    rank-dependent 漏接触负对照，直接证明 JKR 系数 4 修正有效。
-4. 当前：执行完整综合回归、统一所有文档状态并形成阶段总结。
+4. 已完成：`./run_validation.sh all` 共 42/42 PASS；117 项 unit 中
+   113 PASS、4 个可选 `fparser` 测试跳过。两个仓库的结果来源 commit
+   均为 clean。
+
+本文件列出的本阶段工作已全部完成。后续仍明确不在当前验收范围的内容为：
+更多 rank/空间分解遍历、超过默认 8 个 wall history slots、SuperDEM/GSP、
+能量分解，以及自动临界速度搜索；除非用户另行扩展范围，不将其恢复为
+当前待办。
 
 每项必须先定义固定参数和验收判据，再增加最小 case、独立比较和真实运行。
 完成一项后立即更新 `docs/MIGRATION.md`、`validation/docs/VALIDATION.md`、

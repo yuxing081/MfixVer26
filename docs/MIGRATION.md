@@ -436,3 +436,21 @@ JKR 两档和高尺度 JKR-off 均比较 101 帧、每字段 2424 个值，按 g
 error、warning、abort、NaN 或 overflow。该专项为纯法向搜索判据工况，
 PFT/PFR 预期为零；非零切向历史的跨 owner 连续性由既有
 `pair_active_contact_migration` 和 DMP restart 双精度证据承担。
+
+## 第六阶段任务 4：最终综合回归
+
+日期：2026-08-24。
+
+- 从两个干净仓库执行 `./run_validation.sh all`，统一结果为 42/42 PASS；
+  精确来源 commit 由最终快照的 `RUN_INFO.txt` 记录。
+- 117 项 unit tests 中 113 PASS，4 项因缺少可选 `fparser` 跳过。数值回归
+  覆盖官方 Hertz 保护、serial JKR、定量切向、true-STL、2-rank DMP、
+  8-rank 双尺度、serial restart 和 DMP restart。
+- 77 份 solver 日志无 error、abort、NaN 或 overflow。保留并明确记录
+  4 条官方 wrapper 的 namelist description 截断提示，以及 single-face/
+  seam STL 各 1 条 `UNABLE TO PROPAGATE F_AT ARRAY` warning；对应官方轨迹
+  与 STL facet/力/state 验收均通过，不将提示隐藏为“零 warning”。
+- 最终 solver SHA-256 为 serial
+  `46c16ba38f63af4902e14f4c1e70403711a9d5f3ac7a0cb977c95ff2ac1fcbb6`
+  和 DMP
+  `6578c5625953fc573879afd8ddecdf7fa12e89b172b055c067a0cd4418c74de1`。
