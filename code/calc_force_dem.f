@@ -650,20 +650,22 @@ CONTAINS
 
 ! TBD: implementation of rolling friction for glued particles @renjieke 1-1-2024
             IF(USE_JKR .AND. JKR_FC_LOCAL > ZERO) THEN
-! Chen rolling displacement is stored in a canonical global-ID frame.
+! Chen rolling displacement is a pair-invariant tangent-plane vector.
                V_ROLL(:) = -rad_eff*CROSS( &
                   OMEGA_NEW(LL,:)-OMEGA_NEW(I,:),NORMAL(:)) - &
                   0.5D0*(DES_RADIUS(I)-DES_RADIUS(LL))/ &
                   (DES_RADIUS(LL)+DES_RADIUS(I))*VREL_T(:)
-               PFR_NEIGHBOR(:,CC) = PFR_NEIGHBOR(:,CC) + DTSOLID* &
-                  MERGE(ONE,-ONE,IGLOBAL_ID(LL)<IGLOBAL_ID(I))*V_ROLL(:)
+               PFR_NEIGHBOR(:,CC) = PFR_NEIGHBOR(:,CC) + &
+                  DTSOLID*V_ROLL(:)
                XI_MAG = SQRT(DOT_PRODUCT(PFR_NEIGHBOR(:,CC), &
                   PFR_NEIGHBOR(:,CC)))
                XI_CRIT = JKR_THETAR_CRIT*rad_eff
                IF(XI_MAG > XI_CRIT .AND. XI_MAG > ZERO) &
                   PFR_NEIGHBOR(:,CC) = XI_CRIT*PFR_NEIGHBOR(:,CC)/XI_MAG
                KR_JKR = 4.D0*JKR_FC_LOCAL*A_OVER_A0**1.5D0
-               MR_TORQUE(:) = -KR_JKR*PFR_NEIGHBOR(:,CC)
+! Map tangent-plane displacement to the resisting angular torque axis.
+               MR_TORQUE(:) = KR_JKR* &
+                  CROSS(NORMAL(:),PFR_NEIGHBOR(:,CC))
 !$omp atomic
                TOW(LL,1) = TOW(LL,1) + MR_TORQUE(1)
 !$omp atomic

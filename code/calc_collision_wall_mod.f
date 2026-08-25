@@ -804,7 +804,7 @@ CONTAINS
                   WALL_COLLISION_PFR(:,CC_JKR,LL) = XI_CRIT_W* &
                   WALL_COLLISION_PFR(:,CC_JKR,LL)/XI_MAG_W
                KR_JKR_W = 4.D0*JKR_FC_W_LOCAL*A_OVER_A0**1.5D0
-               MR_TORQUE_W(:) = -KR_JKR_W* &
+               MR_TORQUE_W(:) = KR_JKR_W* &
                   CROSS(NORMAL(:),WALL_COLLISION_PFR(:,CC_JKR,LL))
                TOW(LL,:) = TOW(LL,:) + MR_TORQUE_W(:)
                CALL JKR_DIAG_PAIR_EVENT('wall_force_after', &

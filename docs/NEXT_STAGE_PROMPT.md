@@ -36,8 +36,18 @@
    三个 JKR 工况继续覆盖 1→2、2→1 和 tensile state。
 5. 已完成：静态 wall
    geometry、7 个官方 JKR-off、固定 2-rank DMP owner migration、串行/DMP
-   restart 均通过；新增覆盖后的 `./run_validation.sh all` 为 46/46 PASS，
-   125 项 unit 中 121 PASS、4 个可选 `fparser` 测试跳过。
+   restart 均通过；PFR 修复后的 `./run_validation.sh all` 为
+   47/47 PASS，141 项 unit 中 136 PASS、5 个可选测试跳过。
+6. 已完成：松弛后 1000 颗粒团聚体固定 0.1 μs、2×2×2/8-rank smoke；
+   修复 pair-invariant PFR 与 `normal×PFR` 力矩映射后，6000 个角速度分量及
+   碰撞力分量的 serial/DMP 最大误差均为 0，并已升级为门控判据。
+
+## 后续标记：降刚度双性质缩放
+
+只有明确采用 `E_R` 与对应 `gamma_R` 加速 JKR 时，才继续实现 Chen 2019
+Eq. (11)/(12)：滚动刚度使用原始 `gamma_O`，滑移先发生区的临界滑移力也
+使用原始性质。必须显式区分 `gamma_O/gamma_R`、保持旧输入兼容并增加相似性
+测试；当前单一表面能输入不作隐式猜测，本阶段不处理。
 
 前述阶段工作已完成。仍明确不在当前验收范围的是：
 更多 rank/空间分解遍历、超过默认 8 个 wall history slots、SuperDEM/GSP、

@@ -5,7 +5,8 @@
 
 ## 当前状态
 
-- 阶段：第五阶段固定 2-rank DMP restart 已验收；历史章节保留各阶段当时结论。
+- 阶段：第六阶段补充验收完成；固定 2-rank DMP restart、8-rank 团聚体和
+  PFR 重标记不变性均已通过，历史章节保留各阶段当时结论。
 - 模型范围：仅球形颗粒；SuperDEM/GSP 异形颗粒不做 JKR 适配。
 - restart 原则：采用 MFIX 26.1.2 官方修复和 global-ID 映射，PFR/JKR state/wall history 仿照官方 PFT 生命周期扩展，不自行开发另一套邻居 restart 映射。
 - 验证边界：能量统计、DES_USR_VAR(2:31) 和历史 seed 只放在 validation 的具体 case 或 analysis 工具中。
@@ -17,7 +18,8 @@
 - 旧 JKR 仓库：/home/yuxing/mfix/P3/JKR/versions/code。
 - 旧 JKR 分支/提交：jkr-cc-state-refactor，ea55027498a4b939a2982cbb77d137201b034ffc（Expand the useful range of γ）。
 - 旧工作树：dirty；仅 calc_force_dem.f 有未提交修改（18 additions、3 deletions），内容为 restart 回归专用 PFR seed 和 DES_USR_VAR(23:31) 力/力矩诊断，不属于生产物理。
-- 已核验工具链：MFIX 26.1.2、GNU Fortran 15.3.0、CMake 4.2.3；构建入口为激活 mfix-26.1.2 环境后的 build_mfixsolver。mpifort wrapper 存在，但必须在完整激活的 conda 环境中再次验证 DMP 构建。
+- 已核验工具链：MFIX 26.1.2、GNU Fortran 15.3.0、CMake 4.2.3 和 MPI 3.1；
+  串行/DMP 均已在完整激活的 mfix-26.1.2 conda 环境中构建和回归。
 
 本项目只维护相对于 MFIX 26.1.2 修改或新增的文件。不得把 23.4.1 文件整份覆盖到 26.1.2，也不得修改 conda 环境中的官方源码。
 
@@ -43,7 +45,7 @@
 | mpi_init_des_mod.f | model/des/mpi_init_des_mod.f | particle/pair packet 尺寸 | 新版 pair size 为 11，SuperDEM 另加 8；无 JKR/wall history | 依据唯一字段清单重新计算 packet size | 极高 |
 | mpi_pack_des_mod.f | model/des/mpi_pack_des_mod.f | pair PFT/PFR/state 与粒子附着 wall history 打包 | 新版 pair 循环实际停用，PFT pack 被注释 | 保留新版迁移框架，重新启用 pair 协议并增量打包 | 极高 |
 | mpi_unpack_des_mod.f | model/des/mpi_unpack_des_mod.f | 对称恢复 pair/wall history 和 ADD_PAIR slot | 新版 ADD_PAIR/PFT unpack 被注释 | 与 pack 使用同一协议表语义重写 | 极高 |
-| neighbour.f | model/des/neighbour.f | 邻居重建时恢复 PFT/PFR/state；owner 反转时向量反号 | 新版仅同向恢复 PFT 和 SuperDEM history | 采用新版重建，再追加 PFR/state 及 reversed-owner 规则 | 极高 |
+| neighbour.f | model/des/neighbour.f | 邻居重建时恢复 PFT/PFR/state；owner 反转时仅 PFT 反号 | 新版仅同向恢复 PFT 和 SuperDEM history | 采用新版重建，再追加 PFR/state 及 reversed-owner 规则 | 极高 |
 | 无旧独立文件；由历史迁移需求发现 | model/des/des_functions.f | 粒子排序/空间重排时 remap CC 历史 | 新版只 remap PFT 和 SuperDEM history | 新增到需修改清单；扩展所有排序/exchange remap 路径 | 极高 |
 | read_namelist.f | model/read_namelist.f | 旧差异只有末尾空白/换行 | 无需上游替代 | 废弃旧修改；默认不复制，只有编译证明 parser 需要挂接时才最小修改 | 低 |
 | read_res0_des.f | model/des/read_res0_des.f | 读取 PFR、pair/wall state、facet 和 wall PFT/PFR | 新版已读取 global IDs、neighbor/PFT，并由官方 map 重建邻居 | 在新版布局和 map 上追加版本化字段 | 极高 |
@@ -72,7 +74,8 @@
 15. model/des/read_res0_des.f
 16. model/des/write_res0_des.f
 
-复制后逐文件 SHA-256 校验通过 16/16，当前 code/ 与 MFIX 26.1.2 官方来源完全一致。
+第二阶段刚复制完成时逐文件 SHA-256 校验通过 16/16，当时 `code/` 与 MFIX
+26.1.2 官方来源完全一致；后续章节记录在这些基线文件上的增量迁移修改。
 
 model/read_namelist.f 暂不复制；read_res1_des_mod.f 和 write_res1_des_mod.f 采用官方实现；cfnewvalues.f 采用官方实现；des_energy_audit.f 仅作为验证工具迁入 validation/analysis。
 
@@ -80,7 +83,7 @@ model/read_namelist.f 暂不复制；read_res1_des_mod.f 和 write_res1_des_mod.
 
 - 生产 JKR 只支持球形颗粒。SuperDEM/GSP 分支保持官方行为，不新增 JKR 数据、力或历史处理。
 - USE_JKR=.FALSE. 是硬兼容边界：不得改变 26.1.2 原生 Hertz/LSD 的力、历史更新、墙面接触和 DMP 行为。
-- PFT/PFR 是有方向的 contact-pair CC 历史。owner 从 (LL,I) 反转为 (I,LL) 时二者都反号；JKR_CONTACT_STATE 是无方向逻辑状态，不反号。
+- PFT 是有方向的 contact-pair CC 历史，owner 反转时反号；Chen PFR 是接触切平面内的 pair-invariant 滚动位移，owner 反转时保持不变；JKR_CONTACT_STATE 是无方向逻辑状态。
 - 墙面 facet/PFT/PFR/state 是粒子附着历史，随 particle packet 迁移；颗粒–颗粒 PFT/PFR/state 属于 pair packet。
 - 旧版通过 DES_USR_VAR(1,:) 搭载逐颗粒表面能。实现前必须验证其在 26.1.2 的 DMP/restart 生命周期；不能证明稳定语义时不得直接沿用。
 - 邻居重建、粒子排序/所有权迁移、restart global-to-local remap 必须共享同一 global ID、CC owner 和向量方向规则。
@@ -188,7 +191,7 @@ Restart 待办：26.1.2 read_res0_des.f 在 restart 中的 DES_USR_VAR 数量大
 
 - 在 MFIX 26.1.2 的普通球形 DEM 接触循环内语义重写 JKR 法向力；正重叠建立颈部，负重叠仅延续已有颈部，达到 `JKR_ALPHA_SAFETY*delta_c` 后清除 PFT、PFR 和 contact state。
 - 接触半径由稳定分支 Newton 迭代求解；JKR 法向刚度、切向刚度和阻尼分别按 `a`、`a` 和 `sqrt(a)` 缩放。逐颗粒表面能在接触时计算异质 `gamma_eff`。
-- PFT 继续沿用 26.1.2 的接触槽与切平面投影；JKR 滑移上限使用含拉脱力的弹性法向载荷。Chen PFR 按 global-ID canonical frame 累积、限幅并产生等大反向滚动力矩。
+- PFT 继续沿用 26.1.2 的接触槽与切平面投影；JKR 滑移上限使用含拉脱力的弹性法向载荷。Chen PFR 按 pair-invariant tangent-plane frame 累积、限幅，并以 `+k_R*(normal×PFR)` 产生等大反向滚动力矩；物理更新不依赖 global-ID 大小。
 - `USE_JKR=.FALSE.`、零表面能以及 GSP/SuperDEM 路径均不进入 JKR 分支；邻居重建、DMP 和 restart 中的 PFR/state 搬运仍由后续模块完成。
 
 | 日期 | 工况 | 结果 | 证据/边界 |
@@ -224,7 +227,7 @@ Restart 待办：26.1.2 read_res0_des.f 在 restart 中的 DES_USR_VAR 数量大
 日期：2026-08-22。
 
 - 在官方 26.1.2 neighbor rebuild 的 PFT 快照/恢复上同步追加 PFR 和 JKR contact state；同向 pair 原值恢复，新 pair 清零/false。
-- JKR 模式增加反向 owner fallback：PFT/PFR 取反，标量 contact state 不取反；该 fallback 在 `USE_JKR=.FALSE.` 时不启用。
+- JKR 模式增加反向 owner fallback：PFT 取反，PFR 与标量 contact state 保持不变；该 fallback 在 `USE_JKR=.FALSE.` 时不启用。
 - 普通球形 JKR 粒子排序使用独立的双精度历史例程，同时搬运 PFT、PFR 和 state；官方排序例程与 SuperDEM 路径保持不变，以维持关闭 JKR 时的原生行为。
 - 当前反向 fallback 仍依赖重排后的 local particle index；DMP owner migration 必须在 packet 层使用 global ID pair 规则补全。
 
@@ -241,7 +244,7 @@ Restart 待办：26.1.2 read_res0_des.f 在 restart 中的 DES_USR_VAR 数量大
 日期：2026-08-22。
 
 - 基于 26.1.2 的 particle-owner packet 追加墙面 facet ID、PFT、PFR 和 JKR state；基于现有 11-field pair packet 发送 global owner/neighbor ID、网格位置、PFT、PFR 和 pair state。
-- pair history 不在 unpack 时猜测 CC，而是按 global-ID pair 暂存；官方邻居重建产生有效 CC 后再恢复。同向向量保持，反向 owner 映射时 PFT/PFR 取反，state 不取反。
+- pair history 不在 unpack 时猜测 CC，而是按 global-ID pair 暂存；官方邻居重建产生有效 CC 后再恢复。反向 owner 映射时 PFT 取反，PFR/state 保持不变。
 - `USE_JKR=.FALSE.` 时不发送新增 pair/wall 历史，保持官方 26.1.2 owner migration 路径。
 - DMP 粒子包容量在初始化时由墙面槽数固定。为避免某一 rank 动态扩容后产生不一致包布局，JKR DMP 在 8 个墙面 facet slot 全部耗尽时显式停止；串行仍保留官方动态扩容。当前适用范围确认不会超过默认 8 槽，因此不要求扩展动态容量。
 
@@ -311,13 +314,22 @@ Restart 待办：26.1.2 read_res0_des.f 在 restart 中的 DES_USR_VAR 数量大
 
 团聚体结果只证明输入兼容、数组/接触路径可运行及短时宏观量有限；尚未计算平均配位数、重叠率、去除向心力后的长期稳定性或 restart 宏观连续性，不能替代两颗粒历史回归。
 
+2026-08-24 将团聚体 smoke 固化到统一 validation runner：输入改用旧版
+`BACKGROUND_IC_1000.vtp` 的松弛后快照，明确校验 1000 粒子、2 μm 直径、
+2209 对初始重叠和资产 hash；固定 0.1 μs、2×2×2/8 ranks，并与串行按
+physical particle ID 比较。串行/DMP 均正常结束且保留 1000 粒子，最终
+修复前 Rg 差 `8.410e-15 m`、平均速度差 `6.071e-7 m/s`，但逐粒子角速度
+最大分量差达到 `908.892 rad/s`。2026-08-24 通过双颗粒重标记复现定位并
+修复 PFR global-ID 定向和力矩轴问题后，1000 颗粒重跑的 6000 个角速度及
+碰撞力分量 serial/DMP 最大误差均为 0，并升级为硬门槛。
+
 ## 当前验收分类
 
 | 分类 | 当前决定 |
 | --- | --- |
 | 已迁移 | 球形颗粒–颗粒/墙面 Chen/JKR，负重叠颈部，PFT/PFR/滚动力矩，逐颗粒表面能，邻居重建，DMP owner packet，DES RES 2.0 RESTART_1 pair/wall history，以及固定 2-rank/2×1×1 DMP restart 验收 |
 | 采用新版官方实现 | MFIX 26.1.2 `READ_PAR_COL`/global-ID collision map、RESTART_2 early return、粒子所有权与 ghost 框架、SuperDEM/GSP 原生代码路径；在其上仅追加 JKR 历史 |
-| 暂缓/范围外 | 通用不同 MPI 分解遍历、所有方向的跨 rank 反向 owner 断点、超过默认 8 个 wall facet slots、完整能量审计、团聚体长期/配位/重叠/restart 指标 |
+| 暂缓/范围外 | 通用不同 MPI 分解遍历、所有方向的跨 rank 反向 owner 断点、超过默认 8 个 wall facet slots、完整能量审计、团聚体长期/配位演化/restart 指标 |
 | 废弃 | 旧 23.4.1 JKR RES 1.3 直接兼容、旧式 `NEIGHBOR_INDEX` restart、旧 `read_res1` 缺陷修补、`cfnewvalues.f` 能量审计调用、生产代码中的 DES_USR_VAR(2:31) seed/诊断、旧 `read_namelist.f` 空白差异 |
 
 `USE_JKR=.FALSE.` 的串行 Hertz/墙面基准保持 MFIX 26.1.2 原生逐字节一致。DMP restart 不要求绕过 MFIX 26.1.2 自身的并行重排差异，而采用双重判据：JKR 边界历史必须精确相等，最终轨迹必须满足固定容差且不得差于同工况 JKR-off Hertz 基线加绝对容差。
@@ -511,13 +523,42 @@ PFT/PFR 预期为零；非零切向历史的跨 owner 连续性由既有
 - facet 1 最后一个 `after` 事件的 `|PFT|` 为
   `3.1030462688305876e-9 m`；facet 2 第一个 `before` 事件为零，保留比例为
   0。该 PASS 是原生缺陷负对照，不是物理连续性通过。
-- 新增用例后 `./run_validation.sh all` 为 46/46 PASS；125 项 unit tests 中
-  121 PASS、4 项可选 `fparser` 跳过；81 份 solver 日志未发现
-  error、warning、abort、NaN 或 overflow。
-- 当前 solver SHA-256 为 serial
+- 这是 PFR 重标记修复前、刚加入团聚体和 seam 负对照时的历史快照：
+  `./run_validation.sh all` 为 47/47 PASS；131 项 unit tests 中 127 PASS、
+  4 项可选跳过。83 份 solver 日志未发现 error、abort、NaN 或 overflow；
+  warning 采用最终综合回归中的显式保留口径。
+- 该历史快照的 solver SHA-256 为 serial
   `003c6d16a93b58befd247bc1e831f67a44751fc23a9cfe9ca811b454e74ef980`
   和 DMP
   `cf92a9b9e9b6bc75d8c40062ca5d9c156b6c45530c249b193471c48689c785c7`。
 
-两项 MFIX 原生不足的物理过程、源文件和行号统一见
+MFIX 原生不足及 DMP 成对历史连续性风险的物理过程、源文件、证据等级统一见
 [`MFIX_UPSTREAM_LIMITATIONS.md`](MFIX_UPSTREAM_LIMITATIONS.md)。
+
+## 第六阶段补充：JKR PFR 重标记不变性修复
+
+日期：2026-08-24。
+
+- 不等半径双颗粒在只交换输入行/global ID 时稳定复现角速度差；问题来自
+  PFR 增量按 global-ID 乘 ±1，同时力矩未从接触切平面位移映射到转轴。
+- 这不是颗粒跨 MPI 分区时 global ID 改号：MFIX 官方支持说明 DMP 中变化的是
+  本地 `LL`，`iGlobal_ID(LL)` 保持不变。本案例利用的是 serial/DMP 初始化或
+  输入行重排造成的“同一物理初态、不同标号”，从而暴露了编号不应进入物理
+  定律的缺陷。
+- PFR 统一为 pair-invariant tangent-plane displacement；PFT 保持
+  owner-directed。邻居反向恢复和 pending reverse restore 只对 PFT 变号。
+- pair/wall 力矩统一为 `+k_R*(normal×PFR)`；独立单步测试证明 owner 反转
+  时作用反作用成立、由相对转动产生的力矩总功率为负。
+- `mu=0.3/0.001 × base/swap × serial/2-rank同侧/2-rank跨区` 12 个工况
+  四字段误差均为 0；active migration、pair/wall restart 和 1000 颗粒
+  2×2×2 均通过。
+- 修复后统一 `./run_validation.sh all` 为 47/47 PASS，随后 unit 为 136 PASS、
+  5 个可选跳过；solver SHA-256 为 serial
+  `9bb2fdc48ae178d336fdc19af463493b6322571f886bdc0029bad67cdf466f07`、DMP
+  `fc43ab674f99e150d955905de201f3aa0dd743bd19efe62a62c0d5fb5d5c9912`。
+- 后续仅在明确使用降刚度 `E_R` 与缩放表面能 `gamma_R` 时，引入 Chen 2019
+  Eq. (11)/(12) 所需的原始 `gamma_O`；本阶段不增加材料参数。
+- 原生 PFT 不使用 global-ID 正负号，因此不会遇到本次 PFR 重标记错误；但
+  26.1.2 的 rank-local CC/PFT 没有形成完整 owner-migration 搬运闭环，这是
+  独立的上游限制/风险。本项目用 global-ID pair pending queue 最小扩展原有
+  neighbor/packet/restart 路径；归属和官方支持证据见上方 limitations 文档。

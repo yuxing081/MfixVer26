@@ -930,7 +930,7 @@
             DO CC=CC_START,CC_END-1
                IF(NEIGHBORS(CC) == OWNER) THEN
                   PFT_NEIGHBOR(:,CC) = -PENDING_PAIR_PFT(:,N)
-                  PFR_NEIGHBOR(:,CC) = -PENDING_PAIR_PFR(:,N)
+                  PFR_NEIGHBOR(:,CC) = PENDING_PAIR_PFR(:,N)
                   JKR_CONTACT_STATE(CC) = PENDING_PAIR_STATE(N)
                   CALL JKR_DIAG_PAIR_EVENT('pending_restore_reverse', &
                      PENDING_PAIR_OWNER_GID(N),PENDING_PAIR_NEIGH_GID(N), &

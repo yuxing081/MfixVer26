@@ -524,7 +524,7 @@
 ! 43) DES grid IJK of cell containing the neighbor particle.
             call pack_dbuf(lbuf,dg_ijkconv(dg_pijkprv(lneigh),pface,     &
                ineighproc(pface)),pface)
-! 44) Spherical JKR pair histories in the directed owner frame.
+! 44) Spherical JKR histories: directed PFT and pair-invariant PFR/state.
             IF(USE_JKR) THEN
                CALL PACK_DBUF(lbuf,PFT_NEIGHBOR(:,CC),pface)
                CALL PACK_DBUF(lbuf,PFR_NEIGHBOR(:,CC),pface)

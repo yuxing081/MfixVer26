@@ -132,7 +132,7 @@ LOGICAL :: found
             enddo
 
 ! JKR pair ownership may reverse after sorting or owner migration.
-! PFT/PFR are directed vectors; the neck state is an undirected scalar.
+! PFT is owner-directed; PFR and the neck state are pair-invariant.
             IF(.NOT.found .AND. USE_JKR) THEN
                reverse_owner = neighbors(cc)
                IF(reverse_owner >= 1 .AND. reverse_owner <= max_pip) THEN
@@ -143,7 +143,7 @@ LOGICAL :: found
                   DO cc_old = reverse_start_old, reverse_end_old-1
                      IF(neighbors_old(cc_old) == ll) THEN
                         pft_neighbor(:,cc) = -pft_neighbor_old(:,cc_old)
-                        pfr_neighbor(:,cc) = -pfr_neighbor_old(:,cc_old)
+                        pfr_neighbor(:,cc) = pfr_neighbor_old(:,cc_old)
                         jkr_contact_state(cc) = &
                            jkr_contact_state_old(cc_old)
                         found = .TRUE.
