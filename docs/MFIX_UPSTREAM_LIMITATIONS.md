@@ -85,67 +85,86 @@ Hertz/LSD。
 `validation/tests/test_next_stage_contract.py:182-199`，数值证据详见
 `validation/docs/VALIDATION.md` 的“固定 8-rank 双尺度颗粒群”。
 
-## 3. DMP 的本地 CC 不能单独承担跨 rank 成对历史身份
+## 3. 颗粒跨 DMP 分区时会丢失 PFT 切向历史
 
-### 3.1 Global ID 不会因跨分区而切换
+### 3.1 错误发生的历史过程
 
-MFIX 支持论坛对 DMP 粒子身份的说明是：本地索引 `LL` 会变化，
-`iGlobal_ID(LL)` 不会变化；global particle ID 会一直附着于同一颗粒，直到
-颗粒离开计算域。参见 [Particle ID numbers][particle-id]。因此“颗粒跨 MPI
-分区时 Global ID 切换”不是本次角速度差的原因。需要区分三件事：
+原生 MFIX 把颗粒对的切向位移保存在 `PFT_NEIGHBOR(:,CC)` 中。其中 `CC` 是
+当前 rank 邻居表里的本地接触槽，并不是跨 rank 稳定的物理接触身份。当仍在
+接触的一对颗粒跨越 MPI 分区，或迁移后接触 owner 反转时，会经历以下过程：
 
-- 同一个输入文件分别启动 serial 和 DMP 时，初始化/分区过程可能给物理颗粒
-  不同的初始 global ID；这属于两次运行之间的标号差异。
-- 同一次 DMP 运行内，颗粒迁移后 rank、本地数组位置 `LL` 和接触槽 `CC` 可以
-  改变，但该颗粒的 `iGlobal_ID` 保持不变。
-- 有颗粒入口/出口时，新粒子的 ID 分配和离域粒子的 ID 生命周期另有规则；
-  这不等于域内迁移时给现存颗粒改号。
+1. 迁移前，PFT 只存在于旧 rank 的旧 `CC` 槽中。
+2. 颗粒迁移后，其 rank、本地粒子索引 `LL` 和接触槽 `CC` 可以改变；接触对
+   也可能由 `(i,j)` 改为 `(j,i)`。颗粒 Global ID 本身不会因此改变。
+3. 原生 26.1.2 的 particle pair packet 没有形成有效搬运闭环：
+   `model/des/mpi_pack_des_mod.f:485-520` 令 pair 循环为零次，并注释掉 PFT
+   的 pack 调用。
+4. 随后的邻居表重建只在同一旧 owner 的本地 neighbor index 中查找历史，见
+   `model/des/neighbour.f:77-104`。如果新 `CC` 无法匹配旧槽，PFT 被初始化为
+   零，连续接触的切向弹簧历史因此重新开始。
 
-MFIX 26.1 用户手册只把 `VTK_PART_ID` 描述为输出 particle ID，并给出 DMP
-运行方法；目前未找到它对 `iGlobal_ID` 跨分区不变性或 `CC/PFT_NEIGHBOR`
-迁移语义的用户级保证。上述身份结论来自官方支持答复和 26.1.2 源码，而不是
-手册中一个已发布的接触历史契约。
+这不是 Global ID 在跨区时切换。MFIX Support 的
+[Particle ID numbers][particle-id] 明确说明，DMP 中改变的是 `LL`，
+`iGlobal_ID(LL)` 保持不变并随颗粒移动。MFIX 26.1 用户手册只说明 particle ID
+输出和 DMP 运行方式，目前未给出 `CC/PFT_NEIGHBOR` 跨分区连续性的用户级
+保证。
 
-### 3.2 原生 PFT 不会遇到本次 PFR 的编号符号错误，但有独立连续性风险
+MFIX Support 的 [Abnormal particle contact time in DEM simulations with
+DMP parallelization][contact-time] 提供了直接佐证：提问者把成对接触时间存入
+`PFT_NEIGHBOR(4,CC)`，观察到它在 DMP 分区边界重置，而串行和单 rank DMP
+正常；开发者确认 DMP 的 `CC` 逻辑存在问题，并建议维护可跨 rank 传递的接触
+pair identity，不要直接依赖 `CC`。该案例保存的是接触时间而不是原生三分量
+PFT，但触发的是相同的 `CC` 身份和迁移缺口；原生 PFT pack 被禁用则由上述
+26.1.2 源码直接确认。
 
-原生 `model/des/calc_force_dem.f:385-408` 直接用
-`PFT_NEIGHBOR(:,CC)` 积分 `VREL_T`，没有按 global-ID 大小给物理增量乘正负号，
-所以不会复现本项目旧 PFR 的“交换编号后滚动力矩反转”。PFT 是
-owner-directed history；若 owner/neighbor 对调，`VREL_T` 和 PFT 都应反号。
+### 3.2 本项目如何处理 PFT
 
-但原生 26.1.2 的跨 rank 连续性是另一问题：
-`model/des/neighbour.f:77-104` 只按同一 owner 下的本地 neighbor index 恢复
-PFT，找不到就清零；`model/des/mpi_pack_des_mod.f:485-520` 把 pair 循环设成
-零次，并注释了 PFT 打包调用。MFIX 支持论坛 2025-12 至 2026-01 的
-[DMP contact-time 讨论][contact-time]也复现了存入 `PFT_NEIGHBOR(:,CC)` 的
-成对接触时间在分区边界重置；开发者确认 DMP 的 CC 逻辑存在问题，并建议
-维护可通信的 pair identity，而不是跨 rank 直接依赖 CC。
+本项目复用 MFIX 已有的 neighbor、particle migration 和 pair packet 机制，
+没有引入第二套长期接触表：
 
-该证据说明：对任何需要严格连续的成对历史，原生 rank-local CC 本身都不是
-充分的跨分区身份。它不等价于证明所有原生 Hertz/LSD 工况都会出现可见的
-切向力误差；本项目目前没有把“未经修改的 26.1.2 PFT 跨 owner 定量失效”做成
-独立负对照。因此这里记录为源码可见且获官方支持确认的上游限制/风险，并保留
-这一证据边界。
+1. 迁移时把旧 owner 和 neighbor 的两个 Global ID 作为稳定的物理 pair
+   identity，并随 pair packet 发送 PFT。
+2. 接收端不在 particle unpack 阶段猜测新的 `CC`，而是先按 Global-ID pair
+   放入 pending queue。
+3. 等 MFIX 完成邻居表重建、产生有效的新 `CC` 后，再将历史恢复到该槽。
+4. 若 owner/neighbor 顺序反转，PFT 同时取负，因为 PFT 与相对切向速度一样，
+   是按 `owner -> neighbor` 定义的有方向历史。
+5. 排序、普通邻居重建和 restart 也使用相同的 pair identity 与方向规则，
+   避免不同入口各自解释接触历史。
 
-### 3.3 本项目处理和本次缺陷归属
+23 版 JKR 修改已经启用了 pair PFT 的 pack/unpack，并通过 `ADD_PAIR` 恢复到
+接收 rank 的接触槽；26 版迁移保留了这一意图，但适配了 MFIX 26.1.2 新的邻居
+重建和 restart 生命周期，改为 Global-ID pending restore。非零 PFT 的 active
+owner migration 和 DMP restart 已由双精度事件验证。
 
-本项目没有另建平行接触表，而是在 MFIX 的 neighbor CC 生命周期上使用
-global-ID pair 搬运历史：DMP/restart 先按两个 global ID 暂存，官方邻居重建
-产生新 CC 后恢复；owner 反转时 owner-directed PFT 反号，pair-invariant PFR
-不反号。active migration 和 DMP restart 已用双精度事件验证这条链路。
+### 3.3 PFR 和 JKR 接触状态的相同点、不同点与处理
 
-本次逐分量角速度差应归类为本项目旧滚动实现的物理/参考系错误：旧代码用
-global-ID 大小给 PFR 增量定向，同时直接把切平面位移当力矩轴，导致相同物理
-初态仅重标号就改变力矩。修复是取消编号参与物理更新，统一 PFR 的
-pair-invariant 定义和 `normal x PFR` 力矩映射。它应写入迁移和验证缺陷记录，
-不能列为 MFIX 上游 limitation。这里保留本节，是为了说明为什么本项目仍需
-扩展原生 PFT 的 DMP history 搬运机制。
+新增 PFR 滚动历史和 JKR tensile-neck 接触状态与 PFT 的相同点是：三者都
+属于同一个物理颗粒对，必须共享同一 Global-ID pair、同一权威 `CC`、同一
+pack/unpack、pending restore、邻居重建和 restart 生命周期。接触真正断开时，
+三者也在同一接触槽中一起清除，不能因 rank 或 owner 改变而提前重置。
+
+不同点在 owner 反转时的变换规则：
+
+| 历史量 | owner 反转时 | 原因 |
+| --- | --- | --- |
+| PFT | 取反 | owner-directed 切向位移，相对切向方向随 owner 反转 |
+| PFR | 保持不变 | Chen 滚动位移定义为 pair-invariant 接触平面向量；法向反转后力矩自然反向 |
+| JKR contact state | 保持不变 | tensile neck 是否激活是整个物理接触对的无方向逻辑状态 |
+
+因此三者一起搬运、一起按 Global-ID pair 找回新 `CC`，但只对 PFT 做反号。
+本次发现的逐分量角速度差正是旧 PFR 实现错误地使用了编号定向并在 owner
+反转时变号；它属于新增滚动模型的物理/参考系缺陷，不是原生 PFT 跨区丢失
+本身。现在 PFR 不再依赖 Global-ID 大小，并通过 `normal x PFR` 映射滚动力矩。
+墙面 PFT/PFR/state 则作为粒子附着历史随 particle packet 搬运，继续使用
+MFIX 原有 facet/history slot。
 
 ## 4. 状态与后续决策
 
-前两项不足已有本项目可重复负对照；第三项有 26.1.2 源码证据、官方支持帖
-复现和开发者答复，本项目的 JKR history 路径另有正向迁移/restart 验证，但
-尚未增加纯原生 PFT owner-migration 负对照。所有 JKR 修复均保持 MFIX 原有
+前两项不足已有本项目可重复负对照；第三项有 26.1.2 源码证据、MFIX Support
+的同类 `PFT_NEIGHBOR(:,CC)` 历史跨区重置复现和开发者答复，本项目的 JKR
+history 路径另有正向迁移/restart 验证，但尚未增加纯原生三分量 PFT 的
+owner-migration 负对照。所有 JKR 修复均保持 MFIX 原有
 槽或邻居搜索结构。若未来要把修复推广到 JKR-off，应先补齐对应负对照并改为
 物理连续性验收，再单独评估改变 MFIX 原生结果的兼容性影响。
 
