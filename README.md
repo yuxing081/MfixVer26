@@ -23,6 +23,7 @@
 - code/：相对于 MFIX 26.1.2 修改的生产 Fortran 源码；不放验证 seed 或 case 专用诊断。
 - validation/：嵌套的独立 Validation Git 仓库，拥有 cases、生成器、理论参考、测试、结果契约和验证文档；外层生产仓库整体忽略该目录。
 - 本仓库不跟踪 canonical 输入、验证脚本或运行结果，仅保留生产源码及其迁移说明。
+- docs/JKR_IMPLEMENTATION_SUMMARY.md：JKR 公式、变量、生产代码行号、MFIX 生命周期扩展和验证证据的精炼汇总。
 - docs/MIGRATION.md：生产源码的逐文件迁移决定与实现记录。
 - model/：当前已有的 MFIX 26.1.2 官方只读快照，不纳入本仓库版本控制。
 
