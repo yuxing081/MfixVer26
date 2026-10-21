@@ -1,83 +1,99 @@
-# JKR for MFIX 26.1.2
+# MFIX 26.1.2 球形颗粒 JKR
 
-## 项目目标
+本项目以 MFIX 26.1.2 官方源码为基底，实现球形颗粒的 JKR 黏附接触、滑移、
+滚动和扭转，并维护邻居重建、并行迁移及续算中的接触历史。
+当前本地源码基线为 `9b5d639`，对应 GitHub 源码发布
+[`e72b226`](https://github.com/yuxing081/MfixVer26/commit/e72b22660868c2c4ac9d9ed16013f87659fadf35)。
+`code/` 保存相对官方版本的同名覆盖文件，不是完整的 MFIX 安装包。
 
-本项目把基于 MFIX 23.4.1 开发的球形颗粒 Chen/JKR 接触模型迁移到 MFIX 26.1.2。迁移以新版官方源码和官方 restart 邻居映射为基底，不覆盖环境源码，也不移植旧版已知 restart 缺陷。
+## 相对官方 MFIX 的主要修改
 
-当前范围只包括球形颗粒。SuperDEM/GSP 异形颗粒不做 JKR 适配；其官方代码路径保持原样。
+| 修改 | 当前实现 | 主要代码入口 |
+|---|---|---|
+| 球形 JKR 接触与阻力 | 颗粒对及颗粒–墙面的法向黏附、切向滑移、弹性滚动、滚动阻尼和扭转；支持相、墙面和单颗粒表面能，以及实际/模拟杨氏模量对应的降刚度参数映射 | [颗粒对](code/calc_force_dem.f)、[墙面](code/calc_collision_wall_mod.f)、[共享内核](code/usr_mod.f)、[参数检查](code/check_solids_dem.f) |
+| 接触历史方向 | 在法向转动和共同自转时运输切向历史 `PFT` 与滚动历史 `PFR`，再更新增量及限幅；`PFTW` 保存相对扭转角；移除近零历史因舍入残量触发的误停机判据 | [历史运输](code/usr_mod.f)、[历史变量](code/discretelement_mod.f) |
+| MPI 迁移与邻居重建 | 沿用 MFIX 的全局颗粒编号和接触槽，补齐任一端点迁移、角点转发及历史恢复；发生所有权迁移时触发邻居重建，使历史在下一次力计算前可用 | [迁移通信](code/mpi_funs_des_mod.f)、[打包](code/mpi_pack_des_mod.f)、[解包](code/mpi_unpack_des_mod.f)、[邻居管理](code/neighbour.f) |
+| 壁面与邻居几何 | 在 JKR 路径处理共面 STL 接缝的重复接触和安全历史转移，并修正半网格邻居剪枝阈值 | [墙面接触](code/calc_collision_wall_mod.f)、[网格搜索](code/desgrid_mod.f) |
+| 重启与停止保存 | 保存 JKR 接触状态、滑移/滚动/扭转历史、旧法向和历史时间；当前 JKR 重启格式为 2.2；纯 DEM 收到停止请求时写出成对重启文件 | [重启读取](code/read_res0_des.f)、[重启写出](code/write_res0_des.f)、[停止处理](code/mfix.f) |
+| 力链输出与 GUI 输入 | 按输出区域选择接触状态、接触半径、有效表面能、切向位移、滚动位移和弹性扭转角六个字段；归一化使用副本，避免多区域输出覆盖原始力幅值；注册项目关键字 | [VTP 输出](code/vtp_mod.f)、[输出参数](code/output_control.inc)、[GUI 关键字](code/usr_init_namelist.f) |
 
-## 基准与来源
+JKR 由 `USE_JKR=.TRUE.` 启用，使用普通球形 Hertz 接触路径
+（`DES_COLL_MODEL='HERTZIAN'`）。不支持非球形 SuperDEM/GSP、LSD，
+也不能与原生 `USE_COHESION` 混用。JKR 专用物理和历史扩展受开关控制；
+多区域输出与纯 DEM 停止保存修复也适用于关闭 JKR 的情况。
 
-- MFIX 基准：26.1.2。
-- 官方安装源码：/home/yuxing/miniforge3/envs/mfix-26.1.2/share/mfix/src。
-- 本地只读快照：/home/yuxing/mfix/MfixVer26/model。
-- 旧 JKR 仓库：/home/yuxing/mfix/P3/JKR/versions/code。
-- 旧 JKR 提交：ea55027498a4b939a2982cbb77d137201b034ffc。
-- 旧工作树状态：dirty；未提交内容仅为 restart 验证 seed 和诊断字段，不能进入生产物理。
-- 迁移开始日期：2026-08-22。
+已有验证记录覆盖接触响应、历史方向、壁面几何、特定 MPI 分解与迁移工况、
+同版本续算和短时千颗粒剪切。上述结果不代表任意进程数、改变分区后的续算，
+或长时间团聚体破碎与宏观流变已得到完整验证；本次发布没有重新运行求解器。
 
-每个 code/ 文件均从 MFIX 26.1.2 官方版本复制，再按迁移矩阵做最小增量修改。MFIX CMake 按 basename 用当前目录顶层的同名 Fortran 文件替换官方文件，因此 code/ 保持扁平布局。
+## 编译与运行
 
-## 目录
+在已安装 MFIX 26.1.2 的 WSL/Linux 环境中，从本仓库的 `code/` 目录构建：
 
-- code/：相对于 MFIX 26.1.2 修改的生产 Fortran 源码；不放验证 seed 或 case 专用诊断。
-- validation/：嵌套的独立 Validation Git 仓库，拥有 cases、生成器、理论参考、测试、结果契约和验证文档；外层生产仓库整体忽略该目录。
-- 本仓库不跟踪 canonical 输入、验证脚本或运行结果，仅保留生产源码及其迁移说明。
-- docs/JKR_IMPLEMENTATION_SUMMARY.md：JKR 公式、变量、生产代码行号、MFIX 生命周期扩展和验证证据的精炼汇总。
-- docs/MIGRATION.md：生产源码的逐文件迁移决定与实现记录。
-- model/：当前已有的 MFIX 26.1.2 官方只读快照，不纳入本仓库版本控制。
+```sh
+conda activate mfix-26.1.2
+cd /path/to/MfixVer26/code
+build_mfixsolver -j        # 串行
+build_mfixsolver --dmp -j  # MPI/DMP
+```
 
-旧版 `versions/test` 只用于审查测试过程和公式来源，不复制 MFIX 23 结果作为理论真值。
+在算例目录准备 `mfix.dat` 和所需颗粒输入，调用本次构建的入口：
 
-## 编译环境
+```sh
+cd /path/to/case
+/path/to/MfixVer26/code/mfixsolver
+# DMP 示例：输入中的分区乘积应与进程数一致
+mpiexec --bind-to none -np 8 /path/to/MfixVer26/code/mfixsolver_dmp
+```
 
-所有命令均在 WSL Ubuntu-22.04 中执行。先激活准确环境：
+构建通过同名文件覆盖机制使用 `code/` 的源码，保持该目录的扁平布局。
+不修改官方安装源码，不使用旧构建目录中的残留求解器。需要保存接触历史的
+续算使用 `RESTART_1`，并同时保留同次运行的 `RUN_NAME.RES` 和
+`RUN_NAME_DES.RES`；当前 JKR 2.2 读取路径不兼容旧 2.0/2.1 历史文件。
 
-    conda activate /home/yuxing/miniforge3/envs/mfix-26.1.2
+## 文档入口
 
-已核验 MFIX 26.1.2、GNU Fortran 15.3.0、CMake 4.2.3 和 MPI 3.1。串行与 DMP solver 的正式产物分别位于 `code/build/mfixsolver` 和 `code/build_dmp/mfixsolver_dmp`；不要使用 `code/` 顶层可能残留的旧 solver 副本。
+以下是本地完整工作区的文档导航。本次 GitHub 更新仅发布源码和本 README；
+其他文档保留远程已有历史版本，尚未同步的本地文档以路径列出。
+`validation/` 是独立仓库，直接克隆本仓库不会包含其验证记录或算例。
 
-从干净构建目录配置并编译串行 solver：
+| 需要了解的内容 | 文档 |
+|---|---|
+| 当前能力、已验证范围、已知限制 | `docs/STATUS.md` |
+| 公式、参数、降刚度、滚动、扭转和历史方向 | `docs/CONTACT_MODEL.md` |
+| 接触身份、MPI 迁移、墙面历史和重启格式 | `docs/CONTACT_HISTORY.md` |
+| 编译、时间步、停止续算、力链字段和诊断 | `docs/RUNNING_AND_OUTPUT.md` |
+| 原生缺陷的原始证据与当时处理 | [MFIX 原生实现不足](docs/MFIX_UPSTREAM_LIMITATIONS.md) |
+| 文献及外部实现参考（本地索引较远程新） | [参考资料](docs/references/README.md) |
+| 迁移过程、旧版本结论、原文恢复方法 | `docs/archive/CHANGE_RECORD.md` |
 
-    cd /home/yuxing/mfix/MfixVer26/code
-    cmake -S "$CONDA_PREFIX/share/mfix/src" -B build -DCMAKE_BUILD_TYPE=Release
-    cmake --build build -j 8
+原生实现不足文档保留历史记录，其中的旧状态以本页及本地 `docs/STATUS.md` 为补充。
+详细验证方法与容差见本地 `validation/docs/VALIDATION.md`，阶段进度见
+`validation/docs/TEST_PROGRESS.md`。
 
-配置并编译 DMP solver：
+## 目录与职责
 
-    cd /home/yuxing/mfix/MfixVer26/code
-    cmake -S "$CONDA_PREFIX/share/mfix/src" -B build_dmp -DCMAKE_BUILD_TYPE=Release -DENABLE_MPI=ON
-    cmake --build build_dmp -j 8
+下表描述本地完整工作区；除 `code/` 和远程已有文档外，所列内容不一定随本仓库发布。
 
-build/、solver、模块文件和运行输出均被 Git 忽略。不要在 conda 官方源码目录内构建或编辑。
+| 目录 | 用途 |
+|---|---|
+| `code/` | 相对官方版本修改的生产 Fortran 文件，按原生同名覆盖机制保持扁平布局 |
+| `model/` | 官方只读源码快照，不纳入生产仓库版本控制 |
+| `docs/` | 当前技术说明、资料索引和历史记录 |
+| `tests/force_chain/` | 生产输出接口回归 |
+| `validation/` | 独立 Git 仓库，维护算例、参考公式、验证入口及结果 |
+| `UsrVer26/` | 独立 Git 仓库，维护各用户定制版本及同步记录 |
+| `FlowVer26/` | 流动算例和后处理工作区 |
 
-## 最小运行与测试
+只在对应目录维护其职责内容。生产代码不放算例专用历史种子或能量统计；
+现有双精度诊断由 `MFIX_JKR_DIAGNOSTICS` 显式启用，默认关闭。
 
-验证只有一个 shell 入口；Python 运行器负责生成输入、创建独立结果目录、记录 Git/solver/编译器/参数元数据，并在任一必需测试失败时返回非零退出码：
+## 基准与运行约定
 
-    cd /home/yuxing/mfix/MfixVer26/validation
-    ./run_validation.sh unit
-    ./run_validation.sh hertz
-    ./run_validation.sh serial
-    ./run_validation.sh dmp
-    ./run_validation.sh restart
-    ./run_validation.sh dmp_restart
-    ./run_validation.sh all
+- 官方环境：`/home/yuxing/miniforge3/envs/mfix-26.1.2`，在 WSL Ubuntu-22.04 中运行。
+- 官方源码：`/home/yuxing/miniforge3/envs/mfix-26.1.2/share/mfix/src`，不在该目录构建或修改。
+- 旧 JKR 来源：MFIX 23.4.1，提交 `ea55027498a4b939a2982cbb77d137201b034ffc`；只迁移经核对的模型与历史语义。
+- 当前 JKR 重启格式为 2.2；不能用改写文件头的方式把旧历史变成兼容状态。
 
-当前已接入 `unit`、官方 stock 对照的串行 `hertz`、基础 JKR normal `serial`、固定两进程 `dmp`、串行 `restart` 和两进程 `dmp_restart`；未运行项目不会标记为通过。
-
-restart 套件对两颗粒和斜碰墙面分别运行：
-
-1. continuous；
-2. split stage + RESTART_1；
-3. split stage + RESTART_2 敏感性负对照。
-
-串行 RESTART_1 必须与 continuous 的双精度 `particle_output.csv` 逐字节一致。DMP RESTART_1 还要求边界 PFT/PFR/JKR state 双精度逐字段相等、global-ID 最终轨迹满足固定容差，并且误差不超过同工况 JKR-off Hertz 基线加绝对容差。RESTART_2 是否不同单独记录，不作为正向通过条件。每次 runner 调用替换 `validation/results/` 快照。
-
-完整测试顺序保持为原生 Hertz 保护、串行墙面/颗粒对、速度扫描、壁面几何、2-rank DMP、RESTART_1 和小颗粒群集成测试。正式结果写入 `docs/VALIDATION.md`，活动进度写入 `docs/TEST_PROGRESS.md`。
-
-## 生产代码与验证代码边界
-
-生产 code/ 保留 JKR 力学、PFT/PFR、JKR contact state、逐颗粒表面能、邻居/DMP/restart 生命周期所必需的逻辑。新增历史仿照 MFIX 官方 PFT 的保存、全局 ID 映射和恢复流程。
-
-能量统计、DES_USR_VAR(2:31) 和人工 PFR seed 只允许存在于 validation。双精度边界诊断当前作为临时、默认关闭的通用生产钩子保留：仅设置 `MFIX_JKR_DIAGNOSTICS` 时写文件，无固定 case、时间或粒子 ID；完成验收后的验证专用构建迁移列为后续清理项。
+完整编译和验证说明维护在本地 `docs/RUNNING_AND_OUTPUT.md`。开始新工作前
+分别检查生产、验证和用户版本仓库的 Git 状态，保留已有改动。
