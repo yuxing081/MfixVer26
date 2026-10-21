@@ -54,7 +54,7 @@ CONTAINS
       INTEGER, ALLOCATABLE :: PAIR_OWNER_GID(:),PAIR_NEIGH_GID(:)
 ! Set the version of the DES RES file.
       VERSION = 1.2
-      IF(USE_JKR) VERSION = 2.0
+      IF(USE_JKR) VERSION = 2.2D0
 
 ! Set the output dimension.
       lDIMN = merge(2,3,NO_K)
@@ -250,7 +250,7 @@ CONTAINS
       IF (SuperDEM) CALL WRITE_RES_cARRAY(lNEXT_REC,CONTACT_LAMBDA_A_OLD(:))
       IF (SuperDEM) CALL WRITE_RES_cARRAY(lNEXT_REC,CONTACT_LAMBDA_B_OLD(:))
 
-! Version 2.0 appends spherical JKR histories after the official 1.2
+! Version 2.1 appends spherical JKR histories after the official 1.2
 ! collision layout. Neighbor slots retain the official global-ID map.
       IF(USE_JKR) THEN
          ALLOCATE(PAIR_OWNER_GID(SIZE(NEIGHBORS)))
@@ -281,6 +281,18 @@ CONTAINS
             DO LC1=1,lDIMN
                CALL WRITE_RES_pARRAY(lNEXT_REC,WALL_COLLISION_PFT(LC1,CC,:))
                CALL WRITE_RES_pARRAY(lNEXT_REC,WALL_COLLISION_PFR(LC1,CC,:))
+            ENDDO
+         ENDDO
+         CALL WRITE_RES_cARRAY(lNEXT_REC,PFTW_NEIGHBOR(:))
+         DO CC=1,COLLISION_ARRAY_MAX
+            CALL WRITE_RES_pARRAY(lNEXT_REC,WALL_COLLISION_PFTW(CC,:))
+         ENDDO
+! Contact geometry belongs to the last force evaluation, before the
+! position/omega update represented by this checkpoint's particle state.
+         DO LC1=1,4
+            CALL WRITE_RES_cARRAY(lNEXT_REC,JKR_FRAME_NEIGHBOR(LC1,:))
+            DO CC=1,COLLISION_ARRAY_MAX
+               CALL WRITE_RES_pARRAY(lNEXT_REC,WALL_COLLISION_FRAME(LC1,CC,:))
             ENDDO
          ENDDO
          DEALLOCATE(PAIR_OWNER_GID)

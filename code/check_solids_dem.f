@@ -900,7 +900,8 @@ CONTAINS
 ! Particle and effective mass.
       DOUBLE PRECISION :: MASS_M, MASS_L, MASS_EFF
 ! Effective physical quantities. Radius, Young's, Shear
-      DOUBLE PRECISION :: R_EFF, E_EFF, G_MOD_EFF, RED_MASS_EFF
+      DOUBLE PRECISION :: R_EFF, E_EFF, E_EFF_ACTUAL
+      DOUBLE PRECISION :: G_MOD_EFF, RED_MASS_EFF
 ! Alias for coefficient restitution
       DOUBLE PRECISION :: EN, ET
 ! shear modulus
@@ -917,34 +918,55 @@ CONTAINS
       TCOLL = UNDEFINED
       TBOND = UNDEFINED
       TMP_DTSOLID = 1000000.0
+      MMAX_TOT = DES_MMAX+MMAX
 
       IF(USE_JKR) THEN
+         IF(EW_YOUNG_ACTUAL == UNDEFINED) THEN
+            WRITE(ERR_MSG,1000) 'EW_YOUNG_ACTUAL'
+            CALL LOG_ERROR()
+         ELSEIF(EW_YOUNG_ACTUAL <= ZERO .OR. &
+            EW_YOUNG_ACTUAL < EW_YOUNG) THEN
+            WRITE(ERR_MSG,1001) 'EW_YOUNG_ACTUAL', &
+               iVal(EW_YOUNG_ACTUAL)
+            CALL LOG_ERROR()
+         ENDIF
+
          IF(DES_SURFACE_ENERGY_WALL == UNDEFINED) THEN
             WRITE(ERR_MSG,1000) 'DES_SURFACE_ENERGY_WALL'
             CALL LOG_ERROR()
-         ELSEIF(DES_SURFACE_ENERGY_WALL < ZERO .OR. &
-            DES_SURFACE_ENERGY_WALL > 5.0D0 .OR. &
-            (DES_SURFACE_ENERGY_WALL > ZERO .AND. &
-             DES_SURFACE_ENERGY_WALL < 1.0D-4)) THEN
+         ELSEIF(.NOT.(DES_SURFACE_ENERGY_WALL > ZERO)) THEN
             WRITE(ERR_MSG,1001) 'DES_SURFACE_ENERGY_WALL', &
                iVal(DES_SURFACE_ENERGY_WALL)
             CALL LOG_ERROR()
          ENDIF
 
          DO M=1,DES_MMAX
+            IF(E_YOUNG_ACTUAL(M) == UNDEFINED) THEN
+               WRITE(ERR_MSG,1000) trim(iVar('E_YOUNG_ACTUAL',M))
+               CALL LOG_ERROR()
+            ELSEIF(E_YOUNG_ACTUAL(M) <= ZERO .OR. &
+               E_YOUNG_ACTUAL(M) < E_YOUNG(M)) THEN
+               WRITE(ERR_MSG,1001) trim(iVar('E_YOUNG_ACTUAL',M)), &
+                  iVal(E_YOUNG_ACTUAL(M))
+               CALL LOG_ERROR()
+            ENDIF
+
             IF(DES_SURFACE_ENERGY(M) == UNDEFINED) THEN
                WRITE(ERR_MSG,1000) 'DES_SURFACE_ENERGY'
                CALL LOG_ERROR()
-            ELSEIF(DES_SURFACE_ENERGY(M) < ZERO .OR. &
-               DES_SURFACE_ENERGY(M) > 5.0D0 .OR. &
-               (DES_SURFACE_ENERGY(M) > ZERO .AND. &
-                DES_SURFACE_ENERGY(M) < 1.0D-4)) THEN
+            ELSEIF(.NOT.(DES_SURFACE_ENERGY(M) > ZERO)) THEN
                WRITE(ERR_MSG,1001) 'DES_SURFACE_ENERGY', &
                   iVal(DES_SURFACE_ENERGY(M))
                CALL LOG_ERROR()
             ENDIF
          ENDDO
 
+         IF(.NOT.(JKR_ROLL_DAMP_COEFF >= ZERO) .OR. &
+            JKR_ROLL_DAMP_COEFF > HUGE(ONE)) THEN
+            WRITE(ERR_MSG,1001) 'JKR_ROLL_DAMP_COEFF', &
+               iVal(JKR_ROLL_DAMP_COEFF)
+            CALL LOG_ERROR()
+         ENDIF
          IF(JKR_THETAR_CRIT < 1.0D-4 .OR. &
             JKR_THETAR_CRIT > 1.0D-1) THEN
             WRITE(ERR_MSG,1001) 'JKR_THETAR_CRIT', iVal(JKR_THETAR_CRIT)
@@ -960,6 +982,9 @@ CONTAINS
             WRITE(ERR_MSG,1001) 'JKR_ALPHA_SAFETY', iVal(JKR_ALPHA_SAFETY)
             CALL LOG_ERROR()
          ENDIF
+
+         E_YOUNG_ACTUAL((MMAX+1):MMAX_TOT) = &
+            E_YOUNG_ACTUAL(1:DES_MMAX)
       ENDIF
 
 
@@ -985,7 +1010,6 @@ CONTAINS
 ! index until this matter can be addressed otherwise (i.e., require
 ! the user specify correct indexing in project settings). This should have no
 ! impact if not running a hybrid case
-      MMAX_TOT = DES_MMAX+MMAX
       e_young((MMAX+1):MMAX_TOT) = e_young(1:DES_MMAX)
       v_poisson((MMAX+1):MMAX_TOT) = v_poisson(1:DES_MMAX)
       des_en_wall_input((MMAX+1):MMAX_TOT) = des_en_wall_input(1:DES_MMAX)
@@ -1138,6 +1162,14 @@ CONTAINS
                   (2.D0*6.D0**(ONE/3.D0)*R_EFF)
                JKR_FcN(M,L) = 3.D0*PI*R_EFF*JKR_GAMAN(M,L)
 
+               E_EFF_ACTUAL = E_YOUNG_ACTUAL(M)*E_YOUNG_ACTUAL(L) / &
+                  (E_YOUNG_ACTUAL(M)*(ONE - V_POISSON(L)**2) + &
+                   E_YOUNG_ACTUAL(L)*(ONE - V_POISSON(M)**2))
+               JKR_GAMAN_ACTUAL(M,L) = JKR_GAMAN(M,L)* &
+                  (E_EFF_ACTUAL/E_EFF)**(2.D0/5.D0)
+               JKR_FcN_ACTUAL(M,L) = 3.D0*PI*R_EFF* &
+                  JKR_GAMAN_ACTUAL(M,L)
+
                HERT_KN_JKR(M,L) = (4.D0/3.D0)*E_EFF
                HERT_KT_JKR(M,L) = 8.D0*G_MOD_EFF
                DES_ETAN_JKR(M,L) = JKR_DAMPING_ALPHA(EN)* &
@@ -1148,6 +1180,8 @@ CONTAINS
                JKR_AoN(L,M) = JKR_AoN(M,L)
                JKR_DeltacN(L,M) = JKR_DeltacN(M,L)
                JKR_FcN(L,M) = JKR_FcN(M,L)
+               JKR_GAMAN_ACTUAL(L,M) = JKR_GAMAN_ACTUAL(M,L)
+               JKR_FcN_ACTUAL(L,M) = JKR_FcN_ACTUAL(M,L)
                HERT_KN_JKR(L,M) = HERT_KN_JKR(M,L)
                HERT_KT_JKR(L,M) = HERT_KT_JKR(M,L)
                DES_ETAN_JKR(L,M) = DES_ETAN_JKR(M,L)
@@ -1247,6 +1281,13 @@ CONTAINS
             JKR_DeltacWN(M) = JKR_AoWN(M)**2 / &
                (2.D0*6.D0**(ONE/3.D0)*R_EFF)
             JKR_FcWN(M) = 3.D0*PI*R_EFF*JKR_GAMAWN(M)
+            E_EFF_ACTUAL = E_YOUNG_ACTUAL(M)*EW_YOUNG_ACTUAL / &
+               (E_YOUNG_ACTUAL(M)*(ONE-VW_POISSON**2) + &
+                EW_YOUNG_ACTUAL*(ONE-V_POISSON(M)**2))
+            JKR_GAMAWN_ACTUAL(M) = JKR_GAMAWN(M)* &
+               (E_EFF_ACTUAL/E_EFF)**(2.D0/5.D0)
+            JKR_FcWN_ACTUAL(M) = 3.D0*PI*R_EFF* &
+               JKR_GAMAWN_ACTUAL(M)
             HERT_KWN_JKR(M) = (4.D0/3.D0)*E_EFF
             HERT_KWT_JKR(M) = 8.D0*G_MOD_EFF
             DES_ETAN_WALL_JKR(M) = JKR_DAMPING_ALPHA(EN)* &

@@ -1045,7 +1045,7 @@ MODULE DESGRID
 !$omp           il_off,iu_off,jl_off,ju_off,kl_off,ku_off,lcurpar_pos,lcur_off,lSIZE2,tmp_neigh,   &
 !$omp           ltotpic, lneigh,lsearch_rad,ldistvec,ldistsquared, pair_num_smp, pair_max_smp, pairs_smp, int_tmp, &
 !$omp           is_coarse_dg_x, is_coarse_dg_y, is_coarse_dg_z, max_radius, err_msg, pos_and_vel, ier, mype, owner, n_removed) &
-!$omp    shared(max_pip, neighbor_index, dg_pijk, NO_K, des_pos_new, des_vel_new,dg_pic, factor_RLM, &
+!$omp    shared(max_pip, neighbor_index, dg_pijk, NO_K, USE_JKR, des_pos_new, des_vel_new,dg_pic, factor_RLM, &
 !$omp           dd, max_isize, des_radius, gid_list,iglobal_id, &
 !$omp           dg_xstart, dg_ystart, dg_zstart, dg_dxinv, dg_dyinv, dg_dzinv, &
 !$omp           dg_istart1,dg_iend1, dg_jstart1, dg_jend1, dg_kstart1,dg_kend1, des_usr_var, GluedSphereDEM, &

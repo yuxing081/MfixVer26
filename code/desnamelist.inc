@@ -50,7 +50,7 @@
 ! JKR adhesive DEM model (spherical particles only)
         USE_JKR, DES_SURFACE_ENERGY, DES_SURFACE_ENERGY_WALL, &
         JKR_THETAR_CRIT, WALL_JKR_THETAR_CRIT, &
-        JKR_ALPHA_SAFETY, &
+        JKR_ALPHA_SAFETY, JKR_ROLL_DAMP_COEFF, &
 
 
 ! DES Energy Equations: J.Musser

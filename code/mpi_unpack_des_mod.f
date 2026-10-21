@@ -13,6 +13,9 @@
       PUBLIC :: DESMPI_UNPACK_PARCROSS, DESMPI_UNPACK_GHOSTPAR
       PUBLIC :: unpack_dbuf
       PUBLIC :: RESTORE_PENDING_PAIR_HISTORY
+      PUBLIC :: GET_PENDING_PAIR_COUNT, GET_PENDING_PAIR_HISTORY
+      PUBLIC :: HAS_PENDING_PAIR_HISTORY
+      PUBLIC :: JKR_ROTATION_HISTORY_EVENT
       PUBLIC :: JKR_DIAG_PAIR_EVENT
       PUBLIC :: JKR_DIAGNOSTICS_ACTIVE
 
@@ -22,6 +25,8 @@
       INTEGER, ALLOCATABLE :: PENDING_PAIR_NEIGH_GID(:)
       DOUBLE PRECISION, ALLOCATABLE :: PENDING_PAIR_PFT(:,:)
       DOUBLE PRECISION, ALLOCATABLE :: PENDING_PAIR_PFR(:,:)
+      DOUBLE PRECISION, ALLOCATABLE :: PENDING_PAIR_PFTW(:)
+      DOUBLE PRECISION, ALLOCATABLE :: PENDING_PAIR_FRAME(:,:)
       LOGICAL, ALLOCATABLE :: PENDING_PAIR_STATE(:)
       LOGICAL :: JKR_DIAG_CHECKED = .FALSE.
       LOGICAL :: JKR_DIAG_ENABLED = .FALSE.
@@ -411,6 +416,8 @@
 
       logical :: tmp
       DOUBLE PRECISION :: PAIR_PFT_IN(3), PAIR_PFR_IN(3)
+      DOUBLE PRECISION :: PAIR_PFTW_IN
+      DOUBLE PRECISION :: PAIR_FRAME_IN(4)
       LOGICAL :: PAIR_STATE_IN
 !......................................................................!
 
@@ -534,6 +541,8 @@
                CALL UNPACK_DBUF(lbuf,WALL_COLLISION_FACET_ID(CC,llocpar),pface)
                CALL UNPACK_DBUF(lbuf,WALL_COLLISION_PFT(:,CC,llocpar),pface)
                CALL UNPACK_DBUF(lbuf,WALL_COLLISION_PFR(:,CC,llocpar),pface)
+               CALL UNPACK_DBUF(lbuf,WALL_COLLISION_PFTW(CC,llocpar),pface)
+               CALL UNPACK_DBUF(lbuf,WALL_COLLISION_FRAME(:,CC,llocpar),pface)
                CALL UNPACK_DBUF(lbuf,JKR_WALL_CONTACT_STATE(CC,llocpar),pface)
             ENDDO
          ENDIF
@@ -587,6 +596,9 @@
 ! 41) DES grid IJK of cell receiving the particle.
          call unpack_dbuf(lbuf,lparijk,pface)
 
+! Resolve JKR IDs after all faces and ghost updates, when both endpoints
+! are available. Preserve the native non-JKR lookup path verbatim.
+         IF(.NOT.USE_JKR) THEN
 ! Locate the particle on the current process.
          if (.not. locate_par(lparid,lparijk,llocpar)) then
              if (.not. exten_locate_par(lparid,lparijk,llocpar)) then
@@ -596,11 +608,13 @@
              endif
          endif
 
+         ENDIF
 ! 42) Global ID of neighbor particle.
          call unpack_dbuf(lbuf,lneighid,pface)
 ! 43) DES grid IJK of cell containing the neighbor particle.
          call unpack_dbuf(lbuf,lneighijk,pface)
 
+         IF(.NOT.USE_JKR) THEN
 ! Locate the neighbor particle on the current process.
          if (.not. locate_par(lneighid,lneighijk,lneigh)) then
             if (.not. exten_locate_par(lneighid,lparijk,lneigh)) then
@@ -613,6 +627,8 @@
             endif
          endif
 
+         ENDIF
+
 ! Queue pair history by global IDs. It is restored only after the next
 ! official neighbor rebuild has created valid CC slots on this owner.
 ! 44) Spherical JKR pair histories.
@@ -620,8 +636,10 @@
             CALL UNPACK_DBUF(lbuf,PAIR_PFT_IN,pface)
             CALL UNPACK_DBUF(lbuf,PAIR_PFR_IN,pface)
             CALL UNPACK_DBUF(lbuf,PAIR_STATE_IN,pface)
+            CALL UNPACK_DBUF(lbuf,PAIR_PFTW_IN,pface)
+            CALL UNPACK_DBUF(lbuf,PAIR_FRAME_IN,pface)
             CALL QUEUE_PAIR_HISTORY(lparid,lneighid,PAIR_PFT_IN, &
-               PAIR_PFR_IN,PAIR_STATE_IN)
+               PAIR_PFR_IN,PAIR_STATE_IN,PAIR_PFTW_IN,PAIR_FRAME_IN)
          ENDIF
 ! 45) Superquadric contact points
          IF(SuperDEM) THEN
@@ -831,30 +849,92 @@
 
 
 ! Queue directed pair history until NEIGHBOUR has rebuilt valid CC slots.
-      SUBROUTINE QUEUE_PAIR_HISTORY(OWNER_GID,NEIGH_GID,PFT,PFR,STATE)
+      SUBROUTINE QUEUE_PAIR_HISTORY(OWNER_GID,NEIGH_GID,PFT,PFR,STATE,TWIST,FRAME)
       IMPLICIT NONE
       INTEGER, INTENT(IN) :: OWNER_GID,NEIGH_GID
       DOUBLE PRECISION, INTENT(IN) :: PFT(3),PFR(3)
       LOGICAL, INTENT(IN) :: STATE
+      DOUBLE PRECISION, INTENT(IN), OPTIONAL :: TWIST
+      DOUBLE PRECISION, INTENT(IN) :: FRAME(4)
+      INTEGER :: N, FIRST_GID, SECOND_GID
+      DOUBLE PRECISION :: DIRECTION
 
+! One canonical entry per physical pair during this exchange. PFT changes
+! sign on endpoint reversal; rolling and twist histories do not.
+      FIRST_GID = MIN(OWNER_GID,NEIGH_GID)
+      SECOND_GID = MAX(OWNER_GID,NEIGH_GID)
+      DIRECTION = 1D0
+      IF(OWNER_GID /= FIRST_GID) DIRECTION = -1D0
+      DO N=1,PENDING_PAIR_COUNT
+         IF(PENDING_PAIR_OWNER_GID(N) /= FIRST_GID .OR. &
+            PENDING_PAIR_NEIGH_GID(N) /= SECOND_GID) CYCLE
+         PENDING_PAIR_PFT(:,N) = DIRECTION*PFT
+         PENDING_PAIR_PFR(:,N) = PFR
+         PENDING_PAIR_STATE(N) = STATE
+         PENDING_PAIR_PFTW(N) = 0D0
+         IF(PRESENT(TWIST)) PENDING_PAIR_PFTW(N) = TWIST
+         PENDING_PAIR_FRAME(1:3,N) = DIRECTION*FRAME(1:3)
+         PENDING_PAIR_FRAME(4,N) = FRAME(4)
+         RETURN
+      ENDDO
       IF(PENDING_PAIR_COUNT >= PENDING_PAIR_CAPACITY) &
          CALL GROW_PENDING_PAIR_HISTORY
       PENDING_PAIR_COUNT = PENDING_PAIR_COUNT + 1
-      PENDING_PAIR_OWNER_GID(PENDING_PAIR_COUNT) = OWNER_GID
-      PENDING_PAIR_NEIGH_GID(PENDING_PAIR_COUNT) = NEIGH_GID
-      PENDING_PAIR_PFT(:,PENDING_PAIR_COUNT) = PFT
+      PENDING_PAIR_OWNER_GID(PENDING_PAIR_COUNT) = FIRST_GID
+      PENDING_PAIR_NEIGH_GID(PENDING_PAIR_COUNT) = SECOND_GID
+      PENDING_PAIR_PFT(:,PENDING_PAIR_COUNT) = DIRECTION*PFT
       PENDING_PAIR_PFR(:,PENDING_PAIR_COUNT) = PFR
       PENDING_PAIR_STATE(PENDING_PAIR_COUNT) = STATE
+      PENDING_PAIR_PFTW(PENDING_PAIR_COUNT) = 0D0
+      IF(PRESENT(TWIST)) PENDING_PAIR_PFTW(PENDING_PAIR_COUNT) = TWIST
+      PENDING_PAIR_FRAME(1:3,PENDING_PAIR_COUNT) = DIRECTION*FRAME(1:3)
+      PENDING_PAIR_FRAME(4,PENDING_PAIR_COUNT) = FRAME(4)
+      CALL JKR_ROTATION_HISTORY_EVENT('unpack_queue',OWNER_GID,NEIGH_GID, &
+         -1,-1,PENDING_PAIR_PFTW(PENDING_PAIR_COUNT))
       CALL JKR_DIAG_PAIR_EVENT('unpack_queue',OWNER_GID,NEIGH_GID, &
          -1,-1,0D0,0D0,(/0D0,0D0,0D0/),PFT,PFR,STATE)
       END SUBROUTINE QUEUE_PAIR_HISTORY
 
+
+! Read pending data for corner forwarding without creating contact slots.
+      INTEGER FUNCTION GET_PENDING_PAIR_COUNT()
+      GET_PENDING_PAIR_COUNT = PENDING_PAIR_COUNT
+      END FUNCTION GET_PENDING_PAIR_COUNT
+
+      LOGICAL FUNCTION HAS_PENDING_PAIR_HISTORY(OWNER_GID,NEIGH_GID)
+      INTEGER, INTENT(IN) :: OWNER_GID,NEIGH_GID
+      INTEGER :: N
+      HAS_PENDING_PAIR_HISTORY = .FALSE.
+      DO N=1,PENDING_PAIR_COUNT
+         IF(PENDING_PAIR_OWNER_GID(N) /= MIN(OWNER_GID,NEIGH_GID)) CYCLE
+         IF(PENDING_PAIR_NEIGH_GID(N) /= MAX(OWNER_GID,NEIGH_GID)) CYCLE
+         HAS_PENDING_PAIR_HISTORY = .TRUE.
+         RETURN
+      ENDDO
+      END FUNCTION HAS_PENDING_PAIR_HISTORY
+
+      SUBROUTINE GET_PENDING_PAIR_HISTORY(N,OWNER_GID,NEIGH_GID, &
+         PFT,PFR,STATE,TWIST,FRAME)
+      INTEGER, INTENT(IN) :: N
+      INTEGER, INTENT(OUT) :: OWNER_GID,NEIGH_GID
+      DOUBLE PRECISION, INTENT(OUT) :: PFT(3),PFR(3),TWIST
+      DOUBLE PRECISION, INTENT(OUT) :: FRAME(4)
+      LOGICAL, INTENT(OUT) :: STATE
+      OWNER_GID = PENDING_PAIR_OWNER_GID(N)
+      NEIGH_GID = PENDING_PAIR_NEIGH_GID(N)
+      PFT = PENDING_PAIR_PFT(:,N)
+      PFR = PENDING_PAIR_PFR(:,N)
+      STATE = PENDING_PAIR_STATE(N)
+      TWIST = PENDING_PAIR_PFTW(N)
+      FRAME = PENDING_PAIR_FRAME(:,N)
+      END SUBROUTINE GET_PENDING_PAIR_HISTORY
 
       SUBROUTINE GROW_PENDING_PAIR_HISTORY
       IMPLICIT NONE
       INTEGER :: NEW_CAPACITY
       INTEGER, ALLOCATABLE :: TMP_I(:)
       DOUBLE PRECISION, ALLOCATABLE :: TMP_D(:,:)
+      DOUBLE PRECISION, ALLOCATABLE :: TMP_S(:)
       LOGICAL, ALLOCATABLE :: TMP_L(:)
 
       NEW_CAPACITY = MAX(16,2*PENDING_PAIR_CAPACITY)
@@ -879,6 +959,15 @@
          PENDING_PAIR_PFR(:,1:PENDING_PAIR_COUNT)
       CALL MOVE_ALLOC(TMP_D,PENDING_PAIR_PFR)
 
+      ALLOCATE(TMP_S(NEW_CAPACITY))
+      IF(PENDING_PAIR_COUNT > 0) TMP_S(1:PENDING_PAIR_COUNT) = PENDING_PAIR_PFTW(1:PENDING_PAIR_COUNT)
+      CALL MOVE_ALLOC(TMP_S,PENDING_PAIR_PFTW)
+
+      ALLOCATE(TMP_D(4,NEW_CAPACITY))
+      IF(PENDING_PAIR_COUNT > 0) TMP_D(:,1:PENDING_PAIR_COUNT) = &
+         PENDING_PAIR_FRAME(:,1:PENDING_PAIR_COUNT)
+      CALL MOVE_ALLOC(TMP_D,PENDING_PAIR_FRAME)
+
       ALLOCATE(TMP_L(NEW_CAPACITY))
       IF(PENDING_PAIR_COUNT > 0) TMP_L(1:PENDING_PAIR_COUNT) = &
          PENDING_PAIR_STATE(1:PENDING_PAIR_COUNT)
@@ -891,20 +980,20 @@
 ! Restore queued histories onto the official neighbor layout by global ID.
       SUBROUTINE RESTORE_PENDING_PAIR_HISTORY
       USE DISCRETELEMENT
+      USE FUNCTIONS, ONLY: IS_NONEXISTENT
       IMPLICIT NONE
       INTEGER :: N,LL,OWNER,NEIGH,CC,CC_START,CC_END
-      LOGICAL :: FOUND
 
       DO N=1,PENDING_PAIR_COUNT
          OWNER = 0
          NEIGH = 0
          DO LL=1,MAX_PIP
+            IF(IS_NONEXISTENT(LL)) CYCLE
             IF(IGLOBAL_ID(LL) == PENDING_PAIR_OWNER_GID(N)) OWNER = LL
             IF(IGLOBAL_ID(LL) == PENDING_PAIR_NEIGH_GID(N)) NEIGH = LL
          ENDDO
          IF(OWNER == 0 .OR. NEIGH == 0) CYCLE
 
-         FOUND = .FALSE.
          CC_START = 1
          IF(OWNER > 1) CC_START = NEIGHBOR_INDEX(OWNER-1)
          CC_END = NEIGHBOR_INDEX(OWNER)
@@ -912,18 +1001,22 @@
             IF(NEIGHBORS(CC) == NEIGH) THEN
                PFT_NEIGHBOR(:,CC) = PENDING_PAIR_PFT(:,N)
                PFR_NEIGHBOR(:,CC) = PENDING_PAIR_PFR(:,N)
+               PFTW_NEIGHBOR(CC) = PENDING_PAIR_PFTW(N)
+               JKR_FRAME_NEIGHBOR(:,CC) = PENDING_PAIR_FRAME(:,N)
                JKR_CONTACT_STATE(CC) = PENDING_PAIR_STATE(N)
+               CALL JKR_ROTATION_HISTORY_EVENT('pending_restore_direct', &
+                  PENDING_PAIR_OWNER_GID(N),PENDING_PAIR_NEIGH_GID(N),-1,CC,PFTW_NEIGHBOR(CC))
                CALL JKR_DIAG_PAIR_EVENT('pending_restore_direct', &
                   PENDING_PAIR_OWNER_GID(N),PENDING_PAIR_NEIGH_GID(N), &
                   -1,CC,0D0,0D0,(/0D0,0D0,0D0/), &
                   PFT_NEIGHBOR(:,CC),PFR_NEIGHBOR(:,CC), &
                   JKR_CONTACT_STATE(CC))
-               FOUND = .TRUE.
                EXIT
             ENDIF
          ENDDO
 
-         IF(.NOT.FOUND) THEN
+! Restore every local orientation, not just the first match.
+         IF(NEIGH /= OWNER) THEN
             CC_START = 1
             IF(NEIGH > 1) CC_START = NEIGHBOR_INDEX(NEIGH-1)
             CC_END = NEIGHBOR_INDEX(NEIGH)
@@ -931,9 +1024,14 @@
                IF(NEIGHBORS(CC) == OWNER) THEN
                   PFT_NEIGHBOR(:,CC) = -PENDING_PAIR_PFT(:,N)
                   PFR_NEIGHBOR(:,CC) = PENDING_PAIR_PFR(:,N)
+                  PFTW_NEIGHBOR(CC) = PENDING_PAIR_PFTW(N)
+                  JKR_FRAME_NEIGHBOR(1:3,CC) = -PENDING_PAIR_FRAME(1:3,N)
+                  JKR_FRAME_NEIGHBOR(4,CC) = PENDING_PAIR_FRAME(4,N)
                   JKR_CONTACT_STATE(CC) = PENDING_PAIR_STATE(N)
+                  CALL JKR_ROTATION_HISTORY_EVENT('pending_restore_reverse', &
+                     PENDING_PAIR_NEIGH_GID(N),PENDING_PAIR_OWNER_GID(N),-1,CC,PFTW_NEIGHBOR(CC))
                   CALL JKR_DIAG_PAIR_EVENT('pending_restore_reverse', &
-                     PENDING_PAIR_OWNER_GID(N),PENDING_PAIR_NEIGH_GID(N), &
+                     PENDING_PAIR_NEIGH_GID(N),PENDING_PAIR_OWNER_GID(N), &
                      -1,CC,0D0,0D0,(/0D0,0D0,0D0/), &
                      PFT_NEIGHBOR(:,CC),PFR_NEIGHBOR(:,CC), &
                      JKR_CONTACT_STATE(CC))
@@ -998,5 +1096,51 @@
       FLUSH(JKR_DIAG_UNIT)
 !$omp end critical (jkr_diag_write)
       END SUBROUTINE JKR_DIAG_PAIR_EVENT
+
+      SUBROUTINE JKR_ROTATION_HISTORY_EVENT(PHASE_TAG,OWNER_GID, &
+         NEIGH_GID,WALL_ID,LOCAL_SLOT,TWIST,FRAME,PFT,PFR,FT)
+      USE COMPAR, ONLY: MYPE
+      USE RUN, ONLY: TIME
+      IMPLICIT NONE
+      CHARACTER(LEN=*), INTENT(IN) :: PHASE_TAG
+      INTEGER, INTENT(IN) :: OWNER_GID,NEIGH_GID,WALL_ID,LOCAL_SLOT
+      DOUBLE PRECISION, INTENT(IN) :: TWIST
+      DOUBLE PRECISION, INTENT(IN), OPTIONAL :: FRAME(4),PFT(3),PFR(3),FT(3)
+      CHARACTER(LEN=64) :: FILE_NAME
+      INTEGER :: JKR_ROTATION_UNIT
+      SAVE JKR_ROTATION_UNIT
+      DATA JKR_ROTATION_UNIT /-1/
+      INTEGER, SAVE :: JKR_FRAME_UNIT = -1
+
+      IF(.NOT.JKR_DIAGNOSTICS_ACTIVE()) RETURN
+
+!$omp critical (jkr_rotation_diag_write)
+      IF(JKR_ROTATION_UNIT == -1) THEN
+         WRITE(FILE_NAME,'("JKR_ROTATION_HISTORY_rank",I4.4,".dat")') MYPE
+         OPEN(NEWUNIT=JKR_ROTATION_UNIT,FILE=TRIM(FILE_NAME), &
+            STATUS='REPLACE',ACTION='WRITE')
+         WRITE(JKR_ROTATION_UNIT,'(A)') &
+            'time phase rank owner_gid neigh_gid wall_id local_slot twist'
+      ENDIF
+      WRITE(JKR_ROTATION_UNIT,*) TIME,TRIM(PHASE_TAG),MYPE,OWNER_GID, &
+         NEIGH_GID,WALL_ID,LOCAL_SLOT,TWIST
+      FLUSH(JKR_ROTATION_UNIT)
+! The extra opt-in stream uses the contact's DEM timestamp (S_TIME),
+! including substeps of a coupled run; keep the existing twist log intact.
+      IF(PRESENT(FRAME).AND.PRESENT(PFT).AND.PRESENT(PFR).AND.PRESENT(FT)) THEN
+         IF(JKR_FRAME_UNIT == -1) THEN
+            WRITE(FILE_NAME,'("JKR_FRAME_HISTORY_rank",I4.4,".dat")') MYPE
+            OPEN(NEWUNIT=JKR_FRAME_UNIT,FILE=TRIM(FILE_NAME), &
+               STATUS='REPLACE',ACTION='WRITE')
+            WRITE(JKR_FRAME_UNIT,'(A)') &
+               'time phase rank owner_gid neigh_gid wall_id local_slot ' // &
+               'normal pft pfr tangential_force twist'
+         ENDIF
+         WRITE(JKR_FRAME_UNIT,*) FRAME(4),TRIM(PHASE_TAG),MYPE,OWNER_GID, &
+            NEIGH_GID,WALL_ID,LOCAL_SLOT,FRAME(1:3),PFT,PFR,FT,TWIST
+         FLUSH(JKR_FRAME_UNIT)
+      ENDIF
+!$omp end critical (jkr_rotation_diag_write)
+      END SUBROUTINE JKR_ROTATION_HISTORY_EVENT
 
       end module mpi_unpack_des

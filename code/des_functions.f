@@ -243,6 +243,7 @@ SUBROUTINE SWAP_PARTICLE_DATA(i,j)
         call DES_SWAPVALUES(WALL_COLLISION_FACET_ID(d1,i),WALL_COLLISION_FACET_ID(d1,j))
         call DES_SWAPVALUES(JKR_WALL_CONTACT_STATE(d1,i), &
            JKR_WALL_CONTACT_STATE(d1,j))
+        call DES_SWAPVALUES(WALL_COLLISION_PFTW(d1,i),WALL_COLLISION_PFTW(d1,j))
      enddo
      dmax_1 = size(WALL_COLLISION_PFT,1)
      dmax_2 = size(WALL_COLLISION_PFT,2)
@@ -252,6 +253,13 @@ SUBROUTINE SWAP_PARTICLE_DATA(i,j)
             call  DES_SWAPVALUES(WALL_COLLISION_PFT(d1,d2,i),WALL_COLLISION_PFT(d1,d2,j))
             call DES_SWAPVALUES(WALL_COLLISION_PFR(d1,d2,i), &
                WALL_COLLISION_PFR(d1,d2,j))
+  enddo
+     enddo
+     dmax_1 = size(WALL_COLLISION_FRAME,1)
+     do d2=1,dmax_2
+  do d1=1,dmax_1
+            call DES_SWAPVALUES(WALL_COLLISION_FRAME(d1,d2,i), &
+               WALL_COLLISION_FRAME(d1,d2,j))
   enddo
      enddo
 
@@ -489,7 +497,8 @@ END SUBROUTINE SWAP_PARTICLE_DATA
                  if(USE_JKR) then
                      call EXCHANGE_NEIGHBOR_DATA_JKR(swapping_map,inv_swapping_map,&
                          nbrcount,neighbor_index,neighbors,pft_neighbor,&
-                         pfr_neighbor,jkr_contact_state,max_pip,nblen)
+                         pfr_neighbor,pftw_neighbor,jkr_contact_state,&
+                         jkr_frame_neighbor,max_pip,nblen)
                  else
                      call EXCHANGE_NEIGHBOR_DATA(swapping_map,inv_swapping_map,&
                          nbrcount,neighbor_index,neighbors,&
@@ -509,8 +518,9 @@ END SUBROUTINE SWAP_PARTICLE_DATA
                      if(USE_JKR) then
                          call EXCHANGE_NEIGHBOR_DATA_JKR(swapping_map,inv_swapping_map,&
                              nbrcount_old,neighbor_index_old,neighbors_old,&
-                             pft_neighbor_old,pfr_neighbor_old,&
-                             jkr_contact_state_old,max_pip,nblen_old)
+                             pft_neighbor_old,pfr_neighbor_old,pftw_neighbor_old,&
+                             jkr_contact_state_old,jkr_frame_neighbor_old,&
+                             max_pip,nblen_old)
                      else
                          call EXCHANGE_NEIGHBOR_DATA(swapping_map,inv_swapping_map,&
                              nbrcount_old,neighbor_index_old,&
@@ -623,8 +633,8 @@ END SUBROUTINE EXCHANGE_NEIGHBOR_DATA
 ! unchanged for USE_JKR=.FALSE.; this path preserves double-precision PFT,
 ! PFR, and the scalar neck state together.
 SUBROUTINE EXCHANGE_NEIGHBOR_DATA_JKR(swapping_map,inv_swapping_map, &
-      nbrcount,neighbor_index,neighbor,pft_neighbor,pfr_neighbor, &
-      jkr_state,npart,nblen)
+      nbrcount,neighbor_index,neighbor,pft_neighbor,pfr_neighbor,pftw_neighbor, &
+      jkr_state,jkr_frame,npart,nblen)
 
       implicit none
 
@@ -634,14 +644,20 @@ SUBROUTINE EXCHANGE_NEIGHBOR_DATA_JKR(swapping_map,inv_swapping_map, &
       integer, intent(inout) :: neighbor_index(npart),neighbor(nblen)
       double precision, intent(inout) :: pft_neighbor(3,nblen)
       double precision, intent(inout) :: pfr_neighbor(3,nblen)
+      double precision, intent(inout) :: pftw_neighbor(nblen)
       logical, intent(inout) :: jkr_state(nblen)
+      double precision, intent(inout) :: jkr_frame(4,nblen)
 
       integer, allocatable :: nbr(:)
       double precision, allocatable :: pft_nbr(:,:),pfr_nbr(:,:)
+      double precision, allocatable :: frame_nbr(:,:)
+      double precision, allocatable :: pftw_nbr(:)
       logical, allocatable :: state_nbr(:)
       integer :: j,newid,oldid,oldnbid,cc_start,offset,sum_count
 
       allocate(nbr(nblen),pft_nbr(3,nblen),pfr_nbr(3,nblen))
+      allocate(frame_nbr(4,nblen))
+      allocate(pftw_nbr(nblen))
       allocate(state_nbr(nblen))
 
       offset=0
@@ -658,6 +674,8 @@ SUBROUTINE EXCHANGE_NEIGHBOR_DATA_JKR(swapping_map,inv_swapping_map, &
             nbr(offset+j)=inv_swapping_map(oldnbid)
             pft_nbr(:,offset+j)=pft_neighbor(:,cc_start+j-1)
             pfr_nbr(:,offset+j)=pfr_neighbor(:,cc_start+j-1)
+            frame_nbr(:,offset+j)=jkr_frame(:,cc_start+j-1)
+            pftw_nbr(offset+j)=pftw_neighbor(cc_start+j-1)
             state_nbr(offset+j)=jkr_state(cc_start+j-1)
          enddo
          offset=offset+nbrcount(oldid)
@@ -666,6 +684,8 @@ SUBROUTINE EXCHANGE_NEIGHBOR_DATA_JKR(swapping_map,inv_swapping_map, &
       neighbor=nbr
       pft_neighbor=pft_nbr
       pfr_neighbor=pfr_nbr
+      jkr_frame=frame_nbr
+      pftw_neighbor=pftw_nbr
       jkr_state=state_nbr
 
       sum_count=0
@@ -675,7 +695,7 @@ SUBROUTINE EXCHANGE_NEIGHBOR_DATA_JKR(swapping_map,inv_swapping_map, &
          neighbor_index(newid)=sum_count+1
       enddo
 
-      deallocate(nbr,pft_nbr,pfr_nbr,state_nbr)
+      deallocate(nbr,pft_nbr,pfr_nbr,frame_nbr,pftw_nbr,state_nbr)
 
 END SUBROUTINE EXCHANGE_NEIGHBOR_DATA_JKR
 
@@ -870,7 +890,8 @@ SUBROUTINE DES_SORT_PARTICLES_SPATIALLY()
             if(USE_JKR) then
                 call EXCHANGE_NEIGHBOR_DATA_JKR(swapping_map,inv_swapping_map,&
                     nbrcount,neighbor_index,neighbors,pft_neighbor,&
-                    pfr_neighbor,jkr_contact_state,max_pip,nblen)
+                    pfr_neighbor,pftw_neighbor,jkr_contact_state,&
+                    jkr_frame_neighbor,max_pip,nblen)
             else
                 call EXCHANGE_NEIGHBOR_DATA(swapping_map,inv_swapping_map,&
                     nbrcount,neighbor_index,neighbors,&
@@ -891,7 +912,8 @@ SUBROUTINE DES_SORT_PARTICLES_SPATIALLY()
             if(USE_JKR) then
                 call EXCHANGE_NEIGHBOR_DATA_JKR(swapping_map,inv_swapping_map,&
                     nbrcount_old,neighbor_index_old,neighbors_old,&
-                    pft_neighbor_old,pfr_neighbor_old,jkr_contact_state_old,&
+                    pft_neighbor_old,pfr_neighbor_old,pftw_neighbor_old,&
+                    jkr_contact_state_old,jkr_frame_neighbor_old,&
                     max_pip,nblen_old)
             else
                 call EXCHANGE_NEIGHBOR_DATA(swapping_map,inv_swapping_map,&

@@ -27,7 +27,8 @@ CONTAINS
       USE discretelement
       use desgrid
       USE MPI_UNPACK_DES, ONLY: RESTORE_PENDING_PAIR_HISTORY, &
-         JKR_DIAG_PAIR_EVENT, JKR_DIAGNOSTICS_ACTIVE
+         JKR_DIAG_PAIR_EVENT, JKR_ROTATION_HISTORY_EVENT, &
+         JKR_DIAGNOSTICS_ACTIVE
       Use des_thermo
       IMPLICIT NONE
 !-----------------------------------------------
@@ -45,7 +46,9 @@ LOGICAL :: found
 
 !$omp parallel do default(none) private(cc)                                   &
 !$omp shared(neighbors, neighbors_old, pft_neighbor, pft_neighbor_old,        &
-!$omp      pfr_neighbor,pfr_neighbor_old,jkr_contact_state,                   &
+!$omp      pfr_neighbor,pfr_neighbor_old,pftw_neighbor,pftw_neighbor_old,     &
+!$omp      jkr_frame_neighbor,jkr_frame_neighbor_old,                         &
+!$omp      jkr_contact_state,                                                  &
 !$omp      jkr_contact_state_old,                                             &
 !$omp contact_point_a,contact_point_a_old,contact_point_b,contact_point_b_old,&
 !$omp      contact_lambda_a,contact_lambda_a_old,                             &
@@ -54,6 +57,8 @@ LOGICAL :: found
          neighbors_old(cc) = neighbors(cc)
          pft_neighbor_old(:,cc) = pft_neighbor(:,cc)
          pfr_neighbor_old(:,cc) = pfr_neighbor(:,cc)
+         jkr_frame_neighbor_old(:,cc) = jkr_frame_neighbor(:,cc)
+         pftw_neighbor_old(cc) = pftw_neighbor(cc)
          jkr_contact_state_old(cc) = jkr_contact_state(cc)
          if (SuperDEM) then
             contact_point_a_old(:,cc)=contact_point_a(:,cc)
@@ -95,7 +100,9 @@ LOGICAL :: found
 !$omp    reverse_owner,reverse_start_old,reverse_end_old)                &
 !$omp shared(max_pip,neighbors,neighbor_index,neighbor_index_old,       &
 !$omp    neighbors_old,pft_neighbor,pft_neighbor_old,                   &
-!$omp    pfr_neighbor,pfr_neighbor_old,jkr_contact_state,               &
+!$omp    pfr_neighbor,pfr_neighbor_old,pftw_neighbor,pftw_neighbor_old,&
+!$omp    jkr_frame_neighbor,jkr_frame_neighbor_old,                     &
+!$omp    jkr_contact_state,                                              &
 !$omp    jkr_contact_state_old,use_jkr,                                 &
 !$omp    contact_point_a,contact_point_a_old,                           &
 !$omp    contact_point_b,contact_point_b_old,                           &
@@ -118,6 +125,8 @@ LOGICAL :: found
                if (neighbors(cc) .eq. neighbors_old(cc_old)) then
                   pft_neighbor(:,cc) = pft_neighbor_old(:,cc_old)
                   pfr_neighbor(:,cc) = pfr_neighbor_old(:,cc_old)
+                  jkr_frame_neighbor(:,cc) = jkr_frame_neighbor_old(:,cc_old)
+                  pftw_neighbor(cc) = pftw_neighbor_old(cc_old)
                   jkr_contact_state(cc) = jkr_contact_state_old(cc_old)
 !SuperDEM
                      if (SuperDEM) then
@@ -144,6 +153,11 @@ LOGICAL :: found
                      IF(neighbors_old(cc_old) == ll) THEN
                         pft_neighbor(:,cc) = -pft_neighbor_old(:,cc_old)
                         pfr_neighbor(:,cc) = pfr_neighbor_old(:,cc_old)
+                        jkr_frame_neighbor(1:3,cc) = &
+                           -jkr_frame_neighbor_old(1:3,cc_old)
+                        jkr_frame_neighbor(4,cc) = &
+                           jkr_frame_neighbor_old(4,cc_old)
+                        pftw_neighbor(cc) = pftw_neighbor_old(cc_old)
                         jkr_contact_state(cc) = &
                            jkr_contact_state_old(cc_old)
                         found = .TRUE.
@@ -156,6 +170,8 @@ LOGICAL :: found
             if (.not.found) then
                pft_neighbor(:,cc) = 0.0
                pfr_neighbor(:,cc) = 0.0
+               jkr_frame_neighbor(:,cc) = 0.0
+               pftw_neighbor(cc) = 0.0
                jkr_contact_state(cc) = .FALSE.
             endif
 !SuperDEM
@@ -187,6 +203,8 @@ LOGICAL :: found
                      IGLOBAL_ID(LL),IGLOBAL_ID(NEIGHBORS(CC)),-1,CC, &
                      0D0,0D0,(/0D0,0D0,0D0/),PFT_NEIGHBOR(:,CC), &
                      PFR_NEIGHBOR(:,CC),JKR_CONTACT_STATE(CC))
+                  CALL JKR_ROTATION_HISTORY_EVENT('neighbor_after_restore', &
+                     IGLOBAL_ID(LL),IGLOBAL_ID(NEIGHBORS(CC)),-1,CC,PFTW_NEIGHBOR(CC))
                ENDDO
             ENDDO
          ENDIF

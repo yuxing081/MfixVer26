@@ -9,7 +9,8 @@ MODULE READ_RES0_DES_MOD
    use discretelement
    use error_manager
    use functions, only: is_normal
-   use mpi_unpack_des, only: jkr_diag_pair_event, queue_pair_history
+   use mpi_unpack_des, only: jkr_diag_pair_event, &
+      jkr_rotation_history_event, queue_pair_history
    use geometry, only: no_k
    use mfix_pic, only: MPPIC, DES_STAT_WT
    use param, only: dimension_n_s
@@ -59,17 +60,17 @@ CONTAINS
 
       CALL INIT_READ_RES_DES(trim(RUN_NAME), VERSION, lNEXT_REC)
 
-      IF((VERSION > 1.2 .AND. VERSION < 2.0) .OR. VERSION > 2.0) THEN
+      IF(VERSION > 1.2 .AND. VERSION /= 2.2D0) THEN
          WRITE(ERR_MSG,"('Unsupported DES restart version ',F4.1)") VERSION
          CALL LOG_ERROR()
       ENDIF
       IF(RUN_TYPE == 'RESTART_1') THEN
          IF(USE_JKR .AND. VERSION < 2.0) THEN
-            WRITE(ERR_MSG,"('JKR RESTART_1 requires DES restart 2.0')")
+            WRITE(ERR_MSG,"('JKR RESTART_1 requires DES restart 2.2')")
             CALL LOG_ERROR()
          ENDIF
          IF(.NOT.USE_JKR .AND. VERSION >= 2.0) THEN
-            WRITE(ERR_MSG,"('DES restart 2.0 requires USE_JKR=.TRUE.')")
+            WRITE(ERR_MSG,"('DES restart 2.2 requires USE_JKR=.TRUE.')")
             CALL LOG_ERROR()
          ENDIF
       ENDIF
@@ -300,12 +301,7 @@ CONTAINS
                CALL READ_RES_cARRAY(lNEXT_REC,PFR_NEIGHBOR(LC1,:))
             ENDDO
             CALL READ_RES_cARRAY(lNEXT_REC,JKR_CONTACT_STATE(:))
-            DO CC=1,NEIGH_NUM
-               CALL QUEUE_PAIR_HISTORY(PAIR_OWNER_GID(CC), &
-                  PAIR_NEIGH_GID(CC),PFT_NEIGHBOR(:,CC), &
-                  PFR_NEIGHBOR(:,CC),JKR_CONTACT_STATE(CC))
-            ENDDO
-            DEALLOCATE(PAIR_OWNER_GID,PAIR_NEIGH_GID)
+            PFTW_NEIGHBOR = 0D0
             CALL READ_RES_DES(lNEXT_REC,lWALL_SLOTS)
             IF(lWALL_SLOTS < 1) THEN
                WRITE(ERR_MSG,"('Invalid JKR wall slot count ',I0)") lWALL_SLOTS
@@ -315,16 +311,22 @@ CONTAINS
                DEALLOCATE(WALL_COLLISION_FACET_ID)
                DEALLOCATE(WALL_COLLISION_PFT)
                DEALLOCATE(WALL_COLLISION_PFR)
+               DEALLOCATE(WALL_COLLISION_PFTW)
+               DEALLOCATE(WALL_COLLISION_FRAME)
                DEALLOCATE(JKR_WALL_CONTACT_STATE)
                COLLISION_ARRAY_MAX = lWALL_SLOTS
                ALLOCATE(WALL_COLLISION_FACET_ID(COLLISION_ARRAY_MAX,MAX_PIP))
                ALLOCATE(WALL_COLLISION_PFT(DIMN,COLLISION_ARRAY_MAX,MAX_PIP))
                ALLOCATE(WALL_COLLISION_PFR(DIMN,COLLISION_ARRAY_MAX,MAX_PIP))
+               ALLOCATE(WALL_COLLISION_PFTW(COLLISION_ARRAY_MAX,MAX_PIP))
+               ALLOCATE(WALL_COLLISION_FRAME(4,COLLISION_ARRAY_MAX,MAX_PIP))
                ALLOCATE(JKR_WALL_CONTACT_STATE(COLLISION_ARRAY_MAX,MAX_PIP))
             ENDIF
             WALL_COLLISION_FACET_ID = -1
             WALL_COLLISION_PFT = 0.0D0
             WALL_COLLISION_PFR = 0.0D0
+            WALL_COLLISION_PFTW = 0.0D0
+            WALL_COLLISION_FRAME = 0.0D0
             JKR_WALL_CONTACT_STATE = .FALSE.
             DO CC=1,COLLISION_ARRAY_MAX
                CALL READ_RES_pARRAY(lNEXT_REC,WALL_COLLISION_FACET_ID(CC,:))
@@ -344,8 +346,38 @@ CONTAINS
                      JKR_WALL_CONTACT_STATE(CC,LL))
                ENDDO
             ENDDO
+            IF(VERSION >= 2.1) THEN
+               CALL READ_RES_cARRAY(lNEXT_REC,PFTW_NEIGHBOR(:))
+               DO CC=1,COLLISION_ARRAY_MAX
+                  CALL READ_RES_pARRAY(lNEXT_REC,WALL_COLLISION_PFTW(CC,:))
+               ENDDO
+            ENDIF
+            DO LC1=1,4
+               CALL READ_RES_cARRAY(lNEXT_REC,JKR_FRAME_NEIGHBOR(LC1,:))
+               DO CC=1,COLLISION_ARRAY_MAX
+                  CALL READ_RES_pARRAY(lNEXT_REC,WALL_COLLISION_FRAME(LC1,CC,:))
+               ENDDO
+            ENDDO
+            DO CC=1,COLLISION_ARRAY_MAX
+               DO LL=1,MAX_PIP
+                  IF(.NOT.IS_NORMAL(LL)) CYCLE
+                  IF(WALL_COLLISION_FACET_ID(CC,LL) < 0) CYCLE
+                  CALL JKR_ROTATION_HISTORY_EVENT('restart_wall_read', &
+                     IGLOBAL_ID(LL),-1,WALL_COLLISION_FACET_ID(CC,LL),CC, &
+                     WALL_COLLISION_PFTW(CC,LL))
+               ENDDO
+            ENDDO
+            DO CC=1,NEIGH_NUM
+               CALL QUEUE_PAIR_HISTORY(PAIR_OWNER_GID(CC), &
+                  PAIR_NEIGH_GID(CC),PFT_NEIGHBOR(:,CC), &
+                  PFR_NEIGHBOR(:,CC),JKR_CONTACT_STATE(CC), &
+                  PFTW_NEIGHBOR(CC),JKR_FRAME_NEIGHBOR(:,CC))
+            ENDDO
             PFR_NEIGHBOR_OLD = PFR_NEIGHBOR
+            PFTW_NEIGHBOR_OLD = PFTW_NEIGHBOR
+            JKR_FRAME_NEIGHBOR_OLD = JKR_FRAME_NEIGHBOR
             JKR_CONTACT_STATE_OLD = JKR_CONTACT_STATE
+            DEALLOCATE(PAIR_OWNER_GID,PAIR_NEIGH_GID)
          ENDIF
       ENDIF
 

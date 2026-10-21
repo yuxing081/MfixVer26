@@ -160,14 +160,15 @@
          ENDIF
 
 ! Spherical JKR wall history follows the real particle owner:
-! facet ID (1), PFT (3), PFR (3), and neck state (1) per wall slot.
+! facet ID (1), PFT (3), PFR (3), state (1), twist (1), frame (4) per slot.
          IF(USE_JKR) iParticlePacketSize = iParticlePacketSize + &
-            8*COLLISION_ARRAY_MAX
+            13*COLLISION_ARRAY_MAX
 
 ! The active JKR pair packet contains owner/neighbor IDs and cells (4),
-! PFT (3), PFR (3), and neck state (1).
+! PFT (3), PFR (3), neck state (1), twist (1), and frame (4).
          ! Calculate the size of neighbor data
          iPairPacketSize = 11
+         IF(USE_JKR) iPairPacketSize = 16
 !SuperDEM,omoi,super_r,super_mn,super_q
          IF (SuperDEM) then
             iParticlePacketSize = iParticlePacketSize +12

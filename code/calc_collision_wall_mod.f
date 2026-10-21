@@ -30,7 +30,10 @@ MODULE CALC_COLLISION_WALL
    USE geometry, only: kmax1, kmax2, kmin1, kmin2, zlength, xlength, ylength
    USE geometry, only: no_k, jmax1, jmax2, jmin1, jmin2
    USE geometry, only: cyclic_x, cyclic_y, cyclic_z
-   USE mpi_unpack_des, only: jkr_diag_pair_event, jkr_diagnostics_active
+   USE mpi_unpack_des, only: jkr_diag_pair_event, jkr_diagnostics_active, &
+      JKR_ROTATION_HISTORY_EVENT
+   USE usr, ONLY: JKR_TWIST_UPDATE, JKR_ROLL_UPDATE, JKR_TRANSPORT_HISTORY
+   USE keyframe_mod, ONLY: omega_conv_fact
    USE param, only: dimension_i, dimension_j, dimension_k
    USE param1, only: half, one, small_number, undefined
    USE particles_in_cell_mod, only: particles_in_cell
@@ -123,10 +126,18 @@ CONTAINS
       DOUBLE PRECISION :: JKR_NORM(DIMN)
       DOUBLE PRECISION :: JKR_A0_W_LOCAL, JKR_DELTAC_W_LOCAL
       DOUBLE PRECISION :: JKR_FC_W_LOCAL, JKR_GAMMA_W_LOCAL
-      DOUBLE PRECISION :: JKR_E_EFF_W_LOCAL
+      DOUBLE PRECISION :: JKR_FC_W_ACTUAL_LOCAL
+      DOUBLE PRECISION :: JKR_GAMMA_W_ACTUAL_LOCAL
+      DOUBLE PRECISION :: JKR_E_EFF_W_LOCAL, JKR_E_EFF_W_ACTUAL_LOCAL
+      DOUBLE PRECISION :: JKR_GAMMA_PARTICLE
+      LOGICAL :: USE_CACHED_JKR_WALL_PARAMETERS
       DOUBLE PRECISION :: PFT_OLD(DIMN)
+      DOUBLE PRECISION :: MEAN_OMEGA_W(3)
+      LOGICAL :: HISTORY_VALID
       DOUBLE PRECISION :: V_ROLL_W(3), XI_MAG_W, XI_CRIT_W, KR_JKR_W
-      DOUBLE PRECISION :: MR_TORQUE_W(3)
+      DOUBLE PRECISION :: MR_TORQUE_W(3), ROLL_RESISTANCE_W(3)
+      DOUBLE PRECISION :: ROLL_DAMPING_W, TWIST_RATE_W, TWIST_MOMENT_W
+      DOUBLE PRECISION :: TWIST_TORQUE_W(3), SLIDE_LIMIT_W, REL_OMEGA_W(3)
 ! Reject an exact duplicate JKR contact at a coplanar STL facet seam.
       INTEGER :: CC_DUP, NF_DUP, EDGE_DUP
       DOUBLE PRECISION :: CLOSEST_PT_DUP(DIMN), DUPLICATE_DISTANCE_SQ
@@ -182,10 +193,17 @@ CONTAINS
 !$omp    bc_id, v_rot, num_contact, contact_global, arm,                 &
 !$omp    a_over_a0,a_jkr,cc_jkr,jkr_norm,jkr_a0_w_local,                  &
 !$omp    jkr_deltac_w_local,jkr_fc_w_local,jkr_gamma_w_local,             &
-!$omp    jkr_e_eff_w_local,pft_old,v_roll_w,xi_mag_w,xi_crit_w,           &
+!$omp    jkr_e_eff_w_local,jkr_gamma_particle,                             &
+!$omp    use_cached_jkr_wall_parameters,pft_old,v_roll_w,xi_mag_w,         &
+!$omp    xi_crit_w,roll_resistance_w,roll_damping_w,twist_rate_w,         &
+!$omp    twist_moment_w,twist_torque_w,slide_limit_w,rel_omega_w,         &
+!$omp    jkr_fc_w_actual_local,jkr_gamma_w_actual_local,                &
+!$omp    jkr_e_eff_w_actual_local,                                      &
 !$omp    kr_jkr_w,mr_torque_w,cc_dup,nf_dup,edge_dup,closest_pt_dup,       &
 !$omp    duplicate_distance_sq,point_or_edge_dup,duplicate_coplanar_jkr,   &
-!$omp    history_retagged)                                                  &
+!$omp    history_retagged,mean_omega_w,history_valid)                     &
+!$omp shared(wall_collision_pftw,jkr_roll_damp_coeff,                 &
+!$omp    bc_wall_omega,omega_conv_fact,wall_collision_frame,s_time,err_msg) &
 !$omp shared(max_pip,focus_particle,debug_des,                            &
 !$omp    pijk,dg_pijk,des_pos_new,omega_new,pmass,                        &
 !$omp    des_radius,facets_at_dg,vertex,mew_rw,                           &
@@ -197,8 +215,11 @@ CONTAINS
 !$omp    des_etan_wall,des_etat_wall,dtsolid,fc,norm_face,                &
 !$omp    wall_collision_facet_id,wall_collision_PFT,wall_collision_PFR,   &
 !$omp    jkr_wall_contact_state,use_jkr,jkr_thetar_crit,jkr_alpha_safety,  &
-!$omp    wall_jkr_thetar_crit,des_surface_energy_wall,                    &
+!$omp    wall_jkr_thetar_crit,des_surface_energy,                         &
+!$omp    des_surface_energy_wall,                                         &
 !$omp    hert_kwn_jkr,hert_kwt_jkr,des_etan_wall_jkr,des_etat_wall_jkr,   &
+!$omp    jkr_aown,jkr_deltacwn,jkr_fcwn,jkr_fcwn_actual,ref_radius,       &
+!$omp    vw_poisson,v_poisson,e_young_actual,ew_young_actual,             &
 !$omp    use_cohesion,                                                     &
 !$omp    van_der_waals,wall_hamaker_constant,wall_vdw_outer_cutoff,       &
 !$omp    wall_vdw_inner_cutoff,asperities,surface_energy,                 &
@@ -228,6 +249,8 @@ CONTAINS
             WALL_COLLISION_FACET_ID(:,LL) = -1
             WALL_COLLISION_PFT(:,:,LL) = 0.0d0
             WALL_COLLISION_PFR(:,:,LL) = ZERO
+            WALL_COLLISION_PFTW(:,LL) = ZERO
+            WALL_COLLISION_FRAME(:,:,LL) = ZERO
             JKR_WALL_CONTACT_STATE(:,LL) = .FALSE.
             CYCLE
          ENDIF
@@ -257,17 +280,39 @@ CONTAINS
          phaseLL = PIJK(LL,5)
          RADSQ = DES_RADIUS(LL)*DES_RADIUS(LL)
          JKR_FC_W_LOCAL = ZERO
+         JKR_FC_W_ACTUAL_LOCAL = ZERO
          JKR_A0_W_LOCAL = ZERO
          JKR_DELTAC_W_LOCAL = ZERO
          IF(USE_JKR) THEN
-            JKR_GAMMA_W_LOCAL = SQRT(GET_DES_SURFACE_ENERGY(LL)* &
-               DES_SURFACE_ENERGY_WALL)
-            JKR_E_EFF_W_LOCAL = 0.75D0*HERT_KWN_JKR(phaseLL)
-            JKR_A0_W_LOCAL = (9.D0*PI*JKR_GAMMA_W_LOCAL* &
-               DES_RADIUS(LL)**2/JKR_E_EFF_W_LOCAL)**(ONE/3.D0)
-            JKR_DELTAC_W_LOCAL = JKR_A0_W_LOCAL**2 / &
-               (2.D0*6.D0**(ONE/3.D0)*DES_RADIUS(LL))
-            JKR_FC_W_LOCAL = 3.D0*PI*DES_RADIUS(LL)*JKR_GAMMA_W_LOCAL
+            JKR_GAMMA_PARTICLE = GET_DES_SURFACE_ENERGY(LL)
+            USE_CACHED_JKR_WALL_PARAMETERS = &
+               JKR_GAMMA_PARTICLE == DES_SURFACE_ENERGY(phaseLL) .AND. &
+               DES_RADIUS(LL) == REF_RADIUS(phaseLL)
+            IF(USE_CACHED_JKR_WALL_PARAMETERS) THEN
+               JKR_A0_W_LOCAL = JKR_AoWN(phaseLL)
+               JKR_DELTAC_W_LOCAL = JKR_DeltacWN(phaseLL)
+               JKR_FC_W_LOCAL = JKR_FcWN(phaseLL)
+               JKR_FC_W_ACTUAL_LOCAL = JKR_FcWN_ACTUAL(phaseLL)
+            ELSE
+               JKR_GAMMA_W_LOCAL = SQRT(JKR_GAMMA_PARTICLE* &
+                  DES_SURFACE_ENERGY_WALL)
+               JKR_E_EFF_W_LOCAL = 0.75D0*HERT_KWN_JKR(phaseLL)
+               JKR_A0_W_LOCAL = (9.D0*PI*JKR_GAMMA_W_LOCAL* &
+                  DES_RADIUS(LL)**2/JKR_E_EFF_W_LOCAL)**(ONE/3.D0)
+               JKR_DELTAC_W_LOCAL = JKR_A0_W_LOCAL**2 / &
+                  (2.D0*6.D0**(ONE/3.D0)*DES_RADIUS(LL))
+               JKR_FC_W_LOCAL = 3.D0*PI*DES_RADIUS(LL)* &
+                  JKR_GAMMA_W_LOCAL
+               JKR_E_EFF_W_ACTUAL_LOCAL = &
+                  E_YOUNG_ACTUAL(phaseLL)*EW_YOUNG_ACTUAL / &
+                  (E_YOUNG_ACTUAL(phaseLL)*(ONE-VW_POISSON**2) + &
+                   EW_YOUNG_ACTUAL*(ONE-V_POISSON(phaseLL)**2))
+               JKR_GAMMA_W_ACTUAL_LOCAL = JKR_GAMMA_W_LOCAL* &
+                  (JKR_E_EFF_W_ACTUAL_LOCAL/JKR_E_EFF_W_LOCAL)** &
+                  (2.D0/5.D0)
+               JKR_FC_W_ACTUAL_LOCAL = 3.D0*PI*DES_RADIUS(LL)* &
+                  JKR_GAMMA_W_ACTUAL_LOCAL
+            ENDIF
          ENDIF
 
          particle_max(:) = des_pos_new( LL,:) + des_radius(LL)
@@ -678,6 +723,8 @@ CONTAINS
             ELSE
                JKR_WALL_CONTACT_STATE(CC_JKR,LL) = .FALSE.
                WALL_COLLISION_PFR(:,CC_JKR,LL) = ZERO
+               WALL_COLLISION_PFTW(CC_JKR,LL) = ZERO
+               WALL_COLLISION_FRAME(:,CC_JKR,LL) = ZERO
                FNORM(:) = -(KN_DES_W * OVERLAP_N * NORMAL(:) + &
                   ETAN_DES_W * V_REL_TRANS_NORM * NORMAL(:))
             ENDIF
@@ -687,6 +734,28 @@ CONTAINS
                WRITE(*,'(3(f18.5))') V_REL_TRANS_NORM,overlap_n
             endif
 ! Calculate the tangential displacement.
+            IF(USE_JKR .AND. JKR_FC_W_LOCAL > ZERO) THEN
+               CALL JKR_DIAG_PAIR_EVENT('wall_history_before_transport', &
+                  IGLOBAL_ID(LL),-1,NF,CC_JKR,OVERLAP_N, &
+                  -DOT_PRODUCT(FNORM,NORMAL),(/0D0,0D0,0D0/),PFT_OLD, &
+                  WALL_COLLISION_PFR(:,CC_JKR,LL), &
+                  JKR_WALL_CONTACT_STATE(CC_JKR,LL))
+               MEAN_OMEGA_W = 0.5D0*OMEGA_NEW(LL,:)
+               IF(BC_ID > 0) MEAN_OMEGA_W = MEAN_OMEGA_W + &
+                  0.5D0*BC_WALL_OMEGA(BC_ID,:)*OMEGA_CONV_FACT
+! NORMAL is the actual closest-point normal, including edges and vertices.
+               CALL JKR_TRANSPORT_HISTORY(NORMAL,MEAN_OMEGA_W,S_TIME, &
+                  WALL_COLLISION_FRAME(:,CC_JKR,LL),PFT_OLD, &
+                  WALL_COLLISION_PFR(:,CC_JKR,LL),HISTORY_VALID)
+               IF(.NOT.HISTORY_VALID) THEN
+!$omp critical (jkr_history_error)
+                  WRITE(ERR_MSG,'(A,2I12)') &
+                     'Invalid JKR wall frame/history for particle/facet ', &
+                     IGLOBAL_ID(LL),NF
+                  CALL LOG_ERROR()
+!$omp end critical (jkr_history_error)
+               ENDIF
+            ENDIF
             OVERLAP_T(:) = DTSOLID*VREL_T(:) + PFT_OLD(:)
             MAG_OVERLAP_T = sqrt(DOT_PRODUCT(OVERLAP_T, OVERLAP_T))
             if (ldebug) then
@@ -703,8 +772,9 @@ CONTAINS
                FTMD = sqrt(dot_product(FTAN,FTAN))
 ! Max force before the on set of frictional slip.
                IF(USE_JKR .AND. JKR_FC_W_LOCAL > ZERO) THEN
-                  FNMD = MEW_W*ABS(-DOT_PRODUCT(JKR_NORM,NORMAL) + &
-                     2.D0*JKR_FC_W_LOCAL)
+                  FNMD = MEW_W*ABS(4.D0*JKR_FC_W_ACTUAL_LOCAL* &
+                     (A_OVER_A0**3-A_OVER_A0**1.5D0) + &
+                     2.D0*JKR_FC_W_ACTUAL_LOCAL)
                ELSE
                   FNMD = MEW_W*sqrt(dot_product(FNORM,FNORM))
                ENDIF
@@ -724,6 +794,8 @@ CONTAINS
                FTAN = 0.0
             ENDIF
 
+            IF(USE_JKR .AND. JKR_FC_W_LOCAL > ZERO) &
+               FTAN = FTAN-DOT_PRODUCT(FTAN,NORMAL)*NORMAL
             IF(JKR_DIAGNOSTICS_ACTIVE()) &
                CALL JKR_DIAG_PAIR_EVENT('wall_force_before', &
                   IGLOBAL_ID(LL),-1,NF,CC_JKR,OVERLAP_N, &
@@ -793,20 +865,42 @@ CONTAINS
 ! may use glueOmg instead
 ! ---------------------------------------
             IF(USE_JKR .AND. JKR_FC_W_LOCAL > ZERO) THEN
+               REL_OMEGA_W = OMEGA_NEW(LL,:)
+               IF(BC_ID > 0) REL_OMEGA_W = REL_OMEGA_W - &
+                  BC_WALL_OMEGA(BC_ID,:)*OMEGA_CONV_FACT
                V_ROLL_W(:) = -DES_RADIUS(LL)* &
-                  CROSS(OMEGA_NEW(LL,:),NORMAL(:)) - 0.5D0*VREL_T(:)
-               WALL_COLLISION_PFR(:,CC_JKR,LL) = &
-                  WALL_COLLISION_PFR(:,CC_JKR,LL) + DTSOLID*V_ROLL_W(:)
-               XI_MAG_W = SQRT(DOT_PRODUCT(WALL_COLLISION_PFR(:,CC_JKR,LL), &
-                  WALL_COLLISION_PFR(:,CC_JKR,LL)))
+                  CROSS(REL_OMEGA_W,NORMAL(:)) - 0.5D0*VREL_T(:)
                XI_CRIT_W = WALL_JKR_THETAR_CRIT*DES_RADIUS(LL)
-               IF(XI_MAG_W > XI_CRIT_W .AND. XI_MAG_W > ZERO) &
-                  WALL_COLLISION_PFR(:,CC_JKR,LL) = XI_CRIT_W* &
-                  WALL_COLLISION_PFR(:,CC_JKR,LL)/XI_MAG_W
-               KR_JKR_W = 4.D0*JKR_FC_W_LOCAL*A_OVER_A0**1.5D0
-               MR_TORQUE_W(:) = KR_JKR_W* &
+               KR_JKR_W = 4.D0*JKR_FC_W_ACTUAL_LOCAL*A_OVER_A0**1.5D0
+               ROLL_DAMPING_W = JKR_ROLL_DAMP_COEFF* &
+                  SQRT(DOT_PRODUCT(JKR_NORM,JKR_NORM))
+               CALL JKR_ROLL_UPDATE(DTSOLID,V_ROLL_W,KR_JKR_W, &
+                  XI_CRIT_W,ROLL_DAMPING_W, &
+                  WALL_COLLISION_PFR(:,CC_JKR,LL),ROLL_RESISTANCE_W)
+               IF(ROLL_DAMPING_W == ZERO) THEN
+                  MR_TORQUE_W(:) = KR_JKR_W* &
                   CROSS(NORMAL(:),WALL_COLLISION_PFR(:,CC_JKR,LL))
-               TOW(LL,:) = TOW(LL,:) + MR_TORQUE_W(:)
+               ELSE
+                  MR_TORQUE_W = CROSS(NORMAL,ROLL_RESISTANCE_W)
+               ENDIF
+! Contact-normal torsion is part of the baseline JKR contact law.
+               TWIST_RATE_W = DOT_PRODUCT(REL_OMEGA_W,NORMAL)
+               SLIDE_LIMIT_W = MEW_W*ABS(4.D0*JKR_FC_W_ACTUAL_LOCAL* &
+                  (A_OVER_A0**3-A_OVER_A0**1.5D0) + &
+                  2.D0*JKR_FC_W_ACTUAL_LOCAL)
+               CALL JKR_TWIST_UPDATE(DTSOLID,TWIST_RATE_W,A_JKR, &
+                  KT_DES_W,ETAT_DES_W,SLIDE_LIMIT_W, &
+                  WALL_COLLISION_PFTW(CC_JKR,LL),TWIST_MOMENT_W)
+               TWIST_TORQUE_W = TWIST_MOMENT_W*NORMAL
+               MR_TORQUE_W = MR_TORQUE_W + TWIST_TORQUE_W
+               TOW(LL,:) = TOW(LL,:) + MR_TORQUE_W
+! Add the direct contact couple to the native facet reaction.
+               STL_TORQUE(NF,:) = STL_TORQUE(NF,:) - MR_TORQUE_W
+               CALL JKR_ROTATION_HISTORY_EVENT('wall_rotation_after', &
+                  IGLOBAL_ID(LL),-1,NF,CC_JKR,WALL_COLLISION_PFTW(CC_JKR,LL), &
+                  WALL_COLLISION_FRAME(:,CC_JKR,LL), &
+                  WALL_COLLISION_PFT(:,CC_JKR,LL), &
+                  WALL_COLLISION_PFR(:,CC_JKR,LL),FTAN)
                CALL JKR_DIAG_PAIR_EVENT('wall_force_after', &
                   IGLOBAL_ID(LL),-1,NF,CC_JKR,OVERLAP_N, &
                   -DOT_PRODUCT(FNORM,NORMAL),FTAN, &
@@ -1169,6 +1263,8 @@ contains
       wall_collision_facet_id(free_index,LLL) = facet_id
       wall_collision_PFT(:,free_index,LLL) = ZERO
       wall_collision_PFR(:,free_index,LLL) = ZERO
+      WALL_COLLISION_PFTW(free_index,LLL) = ZERO
+      WALL_COLLISION_FRAME(:,free_index,LLL) = ZERO
       JKR_WALL_CONTACT_STATE(free_index,LLL) = .FALSE.
       get_collision(:) = wall_collision_PFT(:,free_index,LLL)
       return
@@ -1192,7 +1288,7 @@ contains
       INTEGER, INTENT(IN) :: NEW_SIZE
       INTEGER :: lSIZE1, lSIZE2, lSIZE3
       INTEGER, ALLOCATABLE :: tmpI2(:,:)
-      DOUBLE PRECISION, ALLOCATABLE :: tmpR3(:,:,:)
+      DOUBLE PRECISION, ALLOCATABLE :: tmpR3(:,:,:), tmpTwist(:,:)
       LOGICAL, ALLOCATABLE :: tmpL2(:,:)
 
       lSIZE1 = size(wall_collision_facet_id,1)
@@ -1216,6 +1312,15 @@ contains
       tmpR3(:,1:lSIZE2,:) = WALL_COLLISION_PFR(:,1:lSIZE2,:)
       tmpR3(:,lSIZE2+1:NEW_SIZE,:) = ZERO
       call move_alloc(tmpR3, WALL_COLLISION_PFR)
+      allocate(tmpTwist(NEW_SIZE,lSIZE3))
+      tmpTwist(1:lSIZE2,:) = WALL_COLLISION_PFTW(1:lSIZE2,:)
+      tmpTwist(lSIZE2+1:NEW_SIZE,:) = ZERO
+      call move_alloc(tmpTwist,WALL_COLLISION_PFTW)
+
+      allocate(tmpR3(4,NEW_SIZE,lSIZE3))
+      tmpR3(:,1:lSIZE2,:) = WALL_COLLISION_FRAME(:,1:lSIZE2,:)
+      tmpR3(:,lSIZE2+1:NEW_SIZE,:) = ZERO
+      call move_alloc(tmpR3,WALL_COLLISION_FRAME)
 
       allocate(tmpL2(NEW_SIZE,lSIZE3))
       tmpL2(1:lSIZE2,:) = JKR_WALL_CONTACT_STATE(1:lSIZE2,:)
@@ -1277,6 +1382,8 @@ contains
             WALL_COLLISION_FACET_ID(CC,LLL) = -1
             WALL_COLLISION_PFT(:,CC,LLL) = ZERO
             WALL_COLLISION_PFR(:,CC,LLL) = ZERO
+            WALL_COLLISION_PFTW(CC,LLL) = ZERO
+            WALL_COLLISION_FRAME(:,CC,LLL) = ZERO
             JKR_WALL_CONTACT_STATE(CC,LLL) = .FALSE.
             RETURN
          ENDIF

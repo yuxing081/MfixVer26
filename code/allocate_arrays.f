@@ -2009,6 +2009,7 @@ CONTAINS
       if(allocated(FCHAIN_GLOBAL_ID1)) deallocate(FCHAIN_GLOBAL_ID1)
       if(allocated(FCHAIN_GLOBAL_ID2)) deallocate(FCHAIN_GLOBAL_ID2)
       if(allocated(FCHAIN_OVERLAP)) deallocate(FCHAIN_OVERLAP)
+      if(allocated(FCHAIN_TWIST_ANGLE)) deallocate(FCHAIN_TWIST_ANGLE)
 
       if(allocated(COORDINATION)) deallocate(COORDINATION)
       if(allocated(MIN_OVERLAP)) deallocate(MIN_OVERLAP)
@@ -2046,6 +2047,8 @@ CONTAINS
 
       if(allocated(wall_collision_PFT)) deallocate(wall_collision_PFT)
       if(allocated(wall_collision_PFR)) deallocate(wall_collision_PFR)
+      if(allocated(WALL_COLLISION_FRAME)) deallocate(WALL_COLLISION_FRAME)
+      if(allocated(wall_collision_PFTW)) deallocate(wall_collision_PFTW)
       if(allocated(JKR_WALL_CONTACT_STATE)) deallocate(JKR_WALL_CONTACT_STATE)
 
 ! Temporary variables to store wall position, velocity and normal vector
@@ -2060,6 +2063,10 @@ CONTAINS
       if(allocated(PFT_NEIGHBOR_OLD)) deallocate(PFT_NEIGHBOR_OLD)
       if(allocated(PFR_NEIGHBOR)) deallocate(PFR_NEIGHBOR)
       if(allocated(PFR_NEIGHBOR_OLD)) deallocate(PFR_NEIGHBOR_OLD)
+      if(allocated(JKR_FRAME_NEIGHBOR)) deallocate(JKR_FRAME_NEIGHBOR)
+      if(allocated(JKR_FRAME_NEIGHBOR_OLD)) deallocate(JKR_FRAME_NEIGHBOR_OLD)
+      if(allocated(PFTW_NEIGHBOR)) deallocate(PFTW_NEIGHBOR)
+      if(allocated(PFTW_NEIGHBOR_OLD)) deallocate(PFTW_NEIGHBOR_OLD)
       if(allocated(JKR_CONTACT_STATE)) deallocate(JKR_CONTACT_STATE)
       if(allocated(JKR_CONTACT_STATE_OLD)) deallocate(JKR_CONTACT_STATE_OLD)
 

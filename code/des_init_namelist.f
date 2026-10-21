@@ -1498,17 +1498,17 @@ CONTAINS
 !</keyword>
 
 !<keyword dtype="REAL" category="Discrete Element Model" required="false" locked="true">
-!  <description>Per-phase particle surface energy used by JKR.</description>
+!  <description>Positive per-phase particle surface energy used by JKR.</description>
 !  <dependent keyword="USE_JKR" value=".TRUE."/>
 !  <arg index="1" id="Phase" min="1" max="MMAX"/>
-!  <range min="0.0" max="5.0"/>
+!  <range min="+0"/>
       DES_SURFACE_ENERGY(:) = UNDEFINED
 !</keyword>
 
 !<keyword dtype="REAL" category="Discrete Element Model" required="false" locked="true">
-!  <description>Wall surface energy used by JKR.</description>
+!  <description>Positive wall surface energy used by JKR.</description>
 !  <dependent keyword="USE_JKR" value=".TRUE."/>
-!  <range min="0.0" max="5.0"/>
+!  <range min="+0"/>
       DES_SURFACE_ENERGY_WALL = UNDEFINED
 !</keyword>
 
@@ -1532,6 +1532,14 @@ CONTAINS
 !  <range min="0.7" max="1.0"/>
       JKR_ALPHA_SAFETY = 1.0d0
 !</keyword>
+
+!<keyword dtype="REAL" category="Discrete Element Model" required="false" locked="true">
+!  <description>Rolling damping time mu_R in seconds; eta_R=mu_R*abs(F_ne). Zero preserves elastic rolling.</description>
+!  <dependent keyword="USE_JKR" value=".TRUE."/>
+!  <range min="0"/>
+      JKR_ROLL_DAMP_COEFF = 0.0D0
+!</keyword>
+
 
 
 
@@ -1580,7 +1588,8 @@ CONTAINS
 !<keyword dtype="REAL" category="Discrete Element Model" required="false" locked="true">
 !  <description>
 !    Actual Young's modulus for the particle [Pa in SI]. Used for
-!    computing correction terms for DEM conduction.
+!    computing correction terms for DEM conduction and the original
+!    surface energy required by reduced-stiffness JKR resistance.
 !  </description>
 !  <range min="+0"/>
 !  <arg index="1" id="Phase" min="1" max="DES_MMAX"/>
@@ -1590,7 +1599,8 @@ CONTAINS
 !<keyword dtype="REAL" category="Discrete Element Model" required="false" locked="true">
 !  <description>
 !    Actual Young's modulus for the walls [Pa in SI]. Used for
-!    computing correction terms for DEM conduction.
+!    computing correction terms for DEM conduction and the original
+!    surface energy required by reduced-stiffness JKR resistance.
 !  </description>
 !  <range min="+0"/>
 !  <dependent keyword="DES_COLL_MODEL" value="HERTZIAN"/>

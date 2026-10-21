@@ -215,6 +215,13 @@ CONTAINS
       Allocate(FCHAIN_GLOBAL_ID1 (1000))
       Allocate(FCHAIN_GLOBAL_ID2 (1000))
       Allocate(FCHAIN_OVERLAP (1000))
+      Allocate(FCHAIN_JKR_STATE (1000))
+      Allocate(FCHAIN_JKR_RADIUS (1000))
+      Allocate(FCHAIN_JKR_GAMMA (1000))
+      Allocate(FCHAIN_TANGENTIAL_DISPLACEMENT (1000,DIMN))
+      Allocate(FCHAIN_ROLLING_DISPLACEMENT (1000,DIMN))
+      Allocate(FCHAIN_TWIST_ANGLE (1000))
+      FCHAIN_TWIST_ANGLE = ZERO
 
       Allocate(MIN_OVERLAP (MAX_PIP))
       Allocate(MAX_OVERLAP (MAX_PIP))
@@ -268,8 +275,12 @@ CONTAINS
       Allocate(  wall_collision_facet_id (COLLISION_ARRAY_MAX, MAX_PIP) )
       wall_collision_facet_id(:,:) = -1
       Allocate(  wall_collision_PFT (DIMN, COLLISION_ARRAY_MAX, MAX_PIP) )
+      Allocate(  wall_collision_PFTW(COLLISION_ARRAY_MAX, MAX_PIP) )
+      wall_collision_PFTW = ZERO
       Allocate(  wall_collision_PFR (DIMN, COLLISION_ARRAY_MAX, MAX_PIP) )
       wall_collision_PFR = ZERO
+      Allocate(  WALL_COLLISION_FRAME (4, COLLISION_ARRAY_MAX, MAX_PIP) )
+      WALL_COLLISION_FRAME = ZERO
       Allocate(  JKR_WALL_CONTACT_STATE (COLLISION_ARRAY_MAX, MAX_PIP) )
       JKR_WALL_CONTACT_STATE = .FALSE.
 
@@ -288,6 +299,14 @@ CONTAINS
       PFR_NEIGHBOR = ZERO
       Allocate(  PFR_NEIGHBOR_OLD (3,MAX_PIP) )
       PFR_NEIGHBOR_OLD = ZERO
+      Allocate(  JKR_FRAME_NEIGHBOR (4,MAX_PIP) )
+      JKR_FRAME_NEIGHBOR = ZERO
+      Allocate(  JKR_FRAME_NEIGHBOR_OLD (4,MAX_PIP) )
+      JKR_FRAME_NEIGHBOR_OLD = ZERO
+      Allocate(  PFTW_NEIGHBOR (MAX_PIP) )
+      PFTW_NEIGHBOR = ZERO
+      Allocate(  PFTW_NEIGHBOR_OLD (MAX_PIP) )
+      PFTW_NEIGHBOR_OLD = ZERO
       Allocate(  JKR_CONTACT_STATE (MAX_PIP) )
       JKR_CONTACT_STATE = .FALSE.
       Allocate(  JKR_CONTACT_STATE_OLD (MAX_PIP) )
@@ -614,6 +633,8 @@ CONTAINS
         INTEGER :: lSIZE1
         INTEGER, DIMENSION(:), ALLOCATABLE :: neigh_tmp
         DOUBLE PRECISION, DIMENSION(:,:), ALLOCATABLE :: pf_tmp
+        DOUBLE PRECISION, DIMENSION(:,:), ALLOCATABLE :: frame_tmp
+        DOUBLE PRECISION, DIMENSION(:), ALLOCATABLE :: pfw_tmp
         LOGICAL, DIMENSION(:), ALLOCATABLE :: jkr_tmp
         DOUBLE PRECISION, DIMENSION(:,:), ALLOCATABLE :: contact_point_a_tmp
         DOUBLE PRECISION, DIMENSION(:,:), ALLOCATABLE :: contact_point_b_tmp
@@ -662,6 +683,25 @@ CONTAINS
         pf_tmp(:,lSIZE1+1:) = 0
         call move_alloc(pf_tmp,pfr_neighbor_old)
 
+        allocate(frame_tmp(4,new_size))
+        frame_tmp(:,1:lSIZE1) = jkr_frame_neighbor(:,1:lSIZE1)
+        frame_tmp(:,lSIZE1+1:) = 0
+        call move_alloc(frame_tmp,jkr_frame_neighbor)
+
+        allocate(frame_tmp(4,new_size))
+        frame_tmp(:,1:lSIZE1) = jkr_frame_neighbor_old(:,1:lSIZE1)
+        frame_tmp(:,lSIZE1+1:) = 0
+        call move_alloc(frame_tmp,jkr_frame_neighbor_old)
+
+        allocate(pfw_tmp(new_size))
+        pfw_tmp(1:lSIZE1) = pftw_neighbor(1:lSIZE1)
+        pfw_tmp(lSIZE1+1:) = 0
+        call move_alloc(pfw_tmp,pftw_neighbor)
+
+        allocate(pfw_tmp(new_size))
+        pfw_tmp(1:lSIZE1) = pftw_neighbor_old(1:lSIZE1)
+        pfw_tmp(lSIZE1+1:) = 0
+        call move_alloc(pfw_tmp,pftw_neighbor_old)
         allocate(jkr_tmp(new_size))
         jkr_tmp(1:lSIZE1) = jkr_contact_state(1:lSIZE1)
         jkr_tmp(lSIZE1+1:) = .FALSE.
@@ -899,7 +939,11 @@ CONTAINS
         call integer_grow2(WALL_COLLISION_FACET_ID,new_size)
         call real_grow3(WALL_COLLISION_PFT,new_size)
         call real_grow3(WALL_COLLISION_PFR,new_size)
+        call real_grow3(WALL_COLLISION_FRAME,new_size)
+        call real_grow2(WALL_COLLISION_PFTW,new_size)
+        WALL_COLLISION_PFTW(:,old_size+1:new_size) = ZERO
         WALL_COLLISION_PFR(:,:,old_size+1:new_size) = ZERO
+        WALL_COLLISION_FRAME(:,:,old_size+1:new_size) = ZERO
         lsz1 = size(JKR_WALL_CONTACT_STATE,1)
         lsz2 = size(JKR_WALL_CONTACT_STATE,2)
         allocate(jkrw_tmp(lsz1,new_size))

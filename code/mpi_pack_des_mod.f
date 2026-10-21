@@ -275,6 +275,8 @@
       use desmpi, only: iPairPacketSize
       use derived_types, only: dg_pic
       use functions
+      use mpi_unpack_des, only: GET_PENDING_PAIR_COUNT, &
+         GET_PENDING_PAIR_HISTORY, HAS_PENDING_PAIR_HISTORY
 
       use vtk
 
@@ -298,6 +300,10 @@
 ! Location in the buffer where the number of pair data is specified.
       integer :: num_neighborlists_send_buf_loc
       integer :: tmp_max_pip
+      integer :: pair_owner, pair_neigh, pair_index, owner_gid, neigh_gid
+      double precision :: pair_pft(3), pair_pfr(3), pair_twist, pair_sign
+      double precision :: pair_frame(4)
+      logical :: pair_state
 !......................................................................!
 
 ! pack the particle crossing the boundary
@@ -418,6 +424,8 @@
                   CALL PACK_DBUF(lbuf,WALL_COLLISION_FACET_ID(CC,lcurpar),pface)
                   CALL PACK_DBUF(lbuf,WALL_COLLISION_PFT(:,CC,lcurpar),pface)
                   CALL PACK_DBUF(lbuf,WALL_COLLISION_PFR(:,CC,lcurpar),pface)
+                  CALL PACK_DBUF(lbuf,WALL_COLLISION_PFTW(CC,lcurpar),pface)
+                  CALL PACK_DBUF(lbuf,WALL_COLLISION_FRAME(:,CC,lcurpar),pface)
                   CALL PACK_DBUF(lbuf,JKR_WALL_CONTACT_STATE(CC,lcurpar),pface)
                ENDDO
             ENDIF
@@ -494,12 +502,12 @@
       num_neighborlists_to_send = 0
 
       tmp_max_pip = 0
-      IF(USE_JKR) tmp_max_pip = max_pip
+      IF(USE_JKR .AND. lparcnt > 0) tmp_max_pip = max_pip
       ! if(flexible_gsp) tmp_max_pip = max_pip
 
       do lcurpar = 1, tmp_max_pip
-! Only packup pairing data for particles being transferred.
-         if (.not. going_to_send(lcurpar)) cycle
+! A stored pair can be incident on either migrating endpoint.
+         if (.not.USE_JKR .and. .not.going_to_send(lcurpar)) cycle
          cc_start = 1
          if(lcurpar .gt. 1) cc_start = neighbor_index(lcurpar-1)
          cc_end = neighbor_index(lcurpar)
@@ -510,25 +518,43 @@
             lneigh = neighbors(cc)
             if(is_nonexistent(lneigh)) cycle
             if(is_exiting(lneigh)) cycle
+            IF(USE_JKR) THEN
+               IF(.NOT.(going_to_send(lcurpar) .OR. &
+                  going_to_send(lneigh))) CYCLE
+! Received history is newer than any pre-exchange CC at a corner rank.
+               IF(HAS_PENDING_PAIR_HISTORY(iglobal_id(lcurpar), &
+                  iglobal_id(lneigh))) CYCLE
+            ENDIF
+            pair_owner = lcurpar
+            pair_neigh = lneigh
+            pair_sign = 1D0
+            IF(USE_JKR .AND. .NOT.going_to_send(lcurpar)) THEN
+               pair_owner = lneigh
+               pair_neigh = lcurpar
+               pair_sign = -1D0
+            ENDIF
 
             ! @renjieke, one thing could happens, that lcurpar and lneigh might not be
             ! within the same gsp. For those pair, we still send the virtual bond info,
             ! however, we should expect zero values there
 ! 40) Global ID of particle being packed.
-            call pack_dbuf(lbuf,iglobal_id(lcurpar),pface)
+            call pack_dbuf(lbuf,iglobal_id(pair_owner),pface)
 ! 41) DES grid IJK of cell receiving the particle.
-            call pack_dbuf(lbuf,dg_ijkconv(dg_pijkprv(lcurpar),pface,    &
+            call pack_dbuf(lbuf,dg_ijkconv(dg_pijkprv(pair_owner),pface,  &
                ineighproc(pface)),pface)
 ! 42) Global ID of neighbor particle.
-            call pack_dbuf(lbuf,iglobal_id(lneigh),pface)
+            call pack_dbuf(lbuf,iglobal_id(pair_neigh),pface)
 ! 43) DES grid IJK of cell containing the neighbor particle.
-            call pack_dbuf(lbuf,dg_ijkconv(dg_pijkprv(lneigh),pface,     &
+            call pack_dbuf(lbuf,dg_ijkconv(dg_pijkprv(pair_neigh),pface,  &
                ineighproc(pface)),pface)
-! 44) Spherical JKR histories: directed PFT and pair-invariant PFR/state.
+! 44) Spherical JKR histories: directed PFT, pair-invariant PFR/state, and twist.
             IF(USE_JKR) THEN
-               CALL PACK_DBUF(lbuf,PFT_NEIGHBOR(:,CC),pface)
+               CALL PACK_DBUF(lbuf,pair_sign*PFT_NEIGHBOR(:,CC),pface)
                CALL PACK_DBUF(lbuf,PFR_NEIGHBOR(:,CC),pface)
                CALL PACK_DBUF(lbuf,JKR_CONTACT_STATE(CC),pface)
+               CALL PACK_DBUF(lbuf,PFTW_NEIGHBOR(CC),pface)
+               CALL PACK_DBUF(lbuf,pair_sign*JKR_FRAME_NEIGHBOR(1:3,CC),pface)
+               CALL PACK_DBUF(lbuf,JKR_FRAME_NEIGHBOR(4,CC),pface)
             ENDIF
 ! 45) Superquadric contact points
             IF(SuperDEM) THEN
@@ -543,6 +569,37 @@
             num_neighborlists_to_send = num_neighborlists_to_send + 1
          enddo
       enddo
+
+! Forward histories received on an earlier migration face. Their CC
+! slots do not exist until NEIGHBOUR, so use the same pending queue and
+! native pair packet instead of creating a parallel contact table.
+      IF(USE_JKR .AND. lparcnt > 0) THEN
+         DO pair_index=1,GET_PENDING_PAIR_COUNT()
+            CALL GET_PENDING_PAIR_HISTORY(pair_index,owner_gid,neigh_gid, &
+               pair_pft,pair_pfr,pair_state,pair_twist,pair_frame)
+            pair_owner = 0
+            DO lcurpar=1,max_pip
+               IF(.NOT.going_to_send(lcurpar)) CYCLE
+               IF(iglobal_id(lcurpar) == owner_gid .OR. &
+                  iglobal_id(lcurpar) == neigh_gid) THEN
+                  pair_owner = lcurpar
+                  EXIT
+               ENDIF
+            ENDDO
+            IF(pair_owner == 0) CYCLE
+! JKR unpack resolves IDs after all faces; no intermediate cell lookup.
+            CALL PACK_DBUF(lbuf,owner_gid,pface)
+            CALL PACK_DBUF(lbuf,0,pface)
+            CALL PACK_DBUF(lbuf,neigh_gid,pface)
+            CALL PACK_DBUF(lbuf,0,pface)
+            CALL PACK_DBUF(lbuf,pair_pft,pface)
+            CALL PACK_DBUF(lbuf,pair_pfr,pface)
+            CALL PACK_DBUF(lbuf,pair_state,pface)
+            CALL PACK_DBUF(lbuf,pair_twist,pface)
+            CALL PACK_DBUF(lbuf,pair_frame,pface)
+            num_neighborlists_to_send = num_neighborlists_to_send + 1
+         ENDDO
+      ENDIF
 
 ! Store the number of pair datasets being sent. This information is
 ! stored before the pairing data so the receiving process knows the

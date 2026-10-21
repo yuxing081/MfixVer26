@@ -3,6 +3,7 @@
 MODULE CALC_FORCE_DEM_MOD
 
    USE CFRELVEL_MOD, ONLY: CFRELVEL
+   USE usr, ONLY: JKR_TWIST_UPDATE, JKR_ROLL_UPDATE, JKR_TRANSPORT_HISTORY
    USE error_manager
 
 CONTAINS
@@ -31,7 +32,8 @@ CONTAINS
       USE discretelement
       USE geometry, only: cyclic_x, cyclic_y, cyclic_z
       USE geometry, only: xlength, ylength, zlength
-      USE mpi_unpack_des, ONLY: JKR_DIAG_PAIR_EVENT
+      USE mpi_unpack_des, ONLY: JKR_DIAG_PAIR_EVENT, &
+         JKR_ROTATION_HISTORY_EVENT
       USE resize
       USE run
       use param1, only: half, one, small_number, zero, undefined
@@ -115,9 +117,15 @@ CONTAINS
       DOUBLE PRECISION :: A_OVER_A0, A_JKR, JKR_NORM(DIMN)
       DOUBLE PRECISION :: JKR_A0_LOCAL, JKR_DELTAC_LOCAL
       DOUBLE PRECISION :: JKR_FC_LOCAL, JKR_GAMMA_LOCAL
-      DOUBLE PRECISION :: JKR_E_EFF_LOCAL
+      DOUBLE PRECISION :: JKR_FC_ACTUAL_LOCAL, JKR_GAMMA_ACTUAL_LOCAL
+      DOUBLE PRECISION :: JKR_E_EFF_LOCAL, JKR_E_EFF_ACTUAL_LOCAL
+      DOUBLE PRECISION :: JKR_GAMMA_LL, JKR_GAMMA_I
+      LOGICAL :: USE_CACHED_JKR_PARAMETERS
+      LOGICAL :: HISTORY_VALID
       DOUBLE PRECISION :: V_ROLL(3), XI_MAG, XI_CRIT, KR_JKR
-      DOUBLE PRECISION :: MR_TORQUE(3)
+      DOUBLE PRECISION :: MR_TORQUE(3), ROLL_RESISTANCE(3)
+      DOUBLE PRECISION :: ROLL_DAMPING, TWIST_RATE, TWIST_MOMENT
+      DOUBLE PRECISION :: TWIST_TORQUE(3), SLIDE_LIMIT
 
 ! BONDED test parameters here
       INTEGER :: nbid
@@ -176,8 +184,12 @@ CONTAINS
 !$omp    dist_cl, dist_ci, fc_tmp, tow_tmp, tow_force, qq_tmp,         &
 !$omp    a_over_a0,a_jkr,jkr_norm,jkr_a0_local,jkr_deltac_local,      &
 !$omp    jkr_fc_local,jkr_gamma_local,jkr_e_eff_local,v_roll,         &
+!$omp    jkr_gamma_ll,jkr_gamma_i,use_cached_jkr_parameters,          &
 !$omp    xi_mag,xi_crit,kr_jkr,mr_torque,                             &
-!$omp    rftow,omega_mag )                                             &
+!$omp    roll_resistance,roll_damping,twist_rate,twist_moment,         &
+!$omp    twist_torque,slide_limit,jkr_fc_actual_local,                 &
+!$omp    jkr_gamma_actual_local,jkr_e_eff_actual_local,               &
+!$omp    rftow,omega_mag,history_valid )                               &
 !$omp shared(max_pip,neighbors,neighbor_index,des_pos_new,des_radius,  &
 !$omp    omega_new, mew_r, numpes,                                     &
 !$omp    des_coll_model_enum,kn,kt,pft_neighbor,pijk,hert_kn,hert_kt,  &
@@ -198,9 +210,15 @@ CONTAINS
 !$omp    FCHAIN_ORIENT, FCHAIN_FN,FCHAIN_FT,FCHAIN_FC,                 &
 !$omp    FCHAIN_LENGTH,FCHAIN_FN_MAG,FCHAIN_LOCAL_ID1,FCHAIN_LOCAL_ID2,&
 !$omp    FCHAIN_GLOBAL_ID1,FCHAIN_GLOBAL_ID2, FCHAIN_OVERLAP) &
+!$omp shared(FCHAIN_JKR_STATE,FCHAIN_JKR_RADIUS,FCHAIN_JKR_GAMMA,     &
+!$omp    FCHAIN_TANGENTIAL_DISPLACEMENT,                              &
+!$omp    FCHAIN_ROLLING_DISPLACEMENT,FCHAIN_TWIST_ANGLE)                                   &
+!$omp shared(pftw_neighbor,jkr_roll_damp_coeff,jkr_frame_neighbor,s_time, &
+!$omp    err_msg)                                                     &
 !$omp shared(use_jkr,pfr_neighbor,jkr_contact_state,jkr_alpha_safety, &
 !$omp    hert_kn_jkr,hert_kt_jkr,des_etan_jkr,des_etat_jkr,           &
-!$omp    jkr_thetar_crit)                                             &
+!$omp    jkr_thetar_crit,jkr_aon,jkr_deltacn,jkr_fcn,jkr_fcn_actual,   &
+!$omp    des_surface_energy,ref_radius,v_poisson,e_young_actual)       &
 !$omp shared(max_pip_exist)
 
 ! Force chain initialization
@@ -341,38 +359,83 @@ CONTAINS
                ENDIF
             ENDIF
 
-! Compute actual-particle JKR parameters before applying the contact cutoff.
+! Apply the native contact gate before evaluating particle-local JKR
+! parameters. A tensile neighbor can only contribute after a nonnegative
+! overlap established its authoritative contact state.
             phaseLL = PIJK(LL,5)
             phaseI = PIJK(I,5)
             rad_eff = (rad*DES_RADIUS(I))/(rad+DES_RADIUS(I))
             JKR_FC_LOCAL = ZERO
+            JKR_FC_ACTUAL_LOCAL = ZERO
             JKR_A0_LOCAL = ZERO
             JKR_DELTAC_LOCAL = ZERO
             IF(USE_JKR) THEN
-               JKR_GAMMA_LOCAL = SQRT(GET_DES_SURFACE_ENERGY(LL)* &
-                  GET_DES_SURFACE_ENERGY(I))
-               JKR_E_EFF_LOCAL = 0.75D0*HERT_KN_JKR(phaseLL,phaseI)
-               JKR_A0_LOCAL = (9.D0*PI*JKR_GAMMA_LOCAL*rad_eff**2/ &
-                  JKR_E_EFF_LOCAL)**(ONE/3.D0)
-               JKR_DELTAC_LOCAL = JKR_A0_LOCAL**2 / &
-                  (2.D0*6.D0**(ONE/3.D0)*rad_eff)
-               JKR_FC_LOCAL = 3.D0*PI*rad_eff*JKR_GAMMA_LOCAL
-            ENDIF
-
-            IF(USE_JKR .AND. JKR_FC_LOCAL > ZERO) THEN
-               IF(DIST_MAG > (R_LM + JKR_ALPHA_SAFETY* &
-                  JKR_DELTAC_LOCAL)**2) THEN
+               IF(DIST_MAG > (R_LM-SMALL_NUMBER)**2 .AND. &
+                  .NOT.JKR_CONTACT_STATE(CC)) THEN
                   PFT_NEIGHBOR(:,CC) = ZERO
                   PFR_NEIGHBOR(:,CC) = ZERO
+                  PFTW_NEIGHBOR(CC) = ZERO
+                  JKR_FRAME_NEIGHBOR(:,CC) = ZERO
                   JKR_CONTACT_STATE(CC) = .FALSE.
                   CYCLE
                ENDIF
-            ELSE
 
-            IF(DIST_MAG > (R_LM - SMALL_NUMBER)**2) THEN
+               JKR_GAMMA_LL = GET_DES_SURFACE_ENERGY(LL)
+               JKR_GAMMA_I = GET_DES_SURFACE_ENERGY(I)
+               JKR_GAMMA_LOCAL = SQRT(JKR_GAMMA_LL*JKR_GAMMA_I)
+               USE_CACHED_JKR_PARAMETERS = &
+                  JKR_GAMMA_LL == DES_SURFACE_ENERGY(phaseLL) .AND. &
+                  JKR_GAMMA_I == DES_SURFACE_ENERGY(phaseI) .AND. &
+                  rad == REF_RADIUS(phaseLL) .AND. &
+                  DES_RADIUS(I) == REF_RADIUS(phaseI)
+               IF(USE_CACHED_JKR_PARAMETERS) THEN
+                  JKR_A0_LOCAL = JKR_AoN(phaseLL,phaseI)
+                  JKR_DELTAC_LOCAL = JKR_DeltacN(phaseLL,phaseI)
+                  JKR_FC_LOCAL = JKR_FcN(phaseLL,phaseI)
+                  JKR_FC_ACTUAL_LOCAL = &
+                     JKR_FcN_ACTUAL(phaseLL,phaseI)
+               ELSE
+                  JKR_E_EFF_LOCAL = 0.75D0* &
+                     HERT_KN_JKR(phaseLL,phaseI)
+                  JKR_A0_LOCAL = (9.D0*PI*JKR_GAMMA_LOCAL* &
+                     rad_eff**2/JKR_E_EFF_LOCAL)**(ONE/3.D0)
+                  JKR_DELTAC_LOCAL = JKR_A0_LOCAL**2 / &
+                     (2.D0*6.D0**(ONE/3.D0)*rad_eff)
+                  JKR_FC_LOCAL = 3.D0*PI*rad_eff*JKR_GAMMA_LOCAL
+                  JKR_E_EFF_ACTUAL_LOCAL = &
+                     E_YOUNG_ACTUAL(phaseLL)*E_YOUNG_ACTUAL(phaseI) / &
+                     (E_YOUNG_ACTUAL(phaseLL)* &
+                        (ONE-V_POISSON(phaseI)**2) + &
+                      E_YOUNG_ACTUAL(phaseI)* &
+                        (ONE-V_POISSON(phaseLL)**2))
+                  JKR_GAMMA_ACTUAL_LOCAL = JKR_GAMMA_LOCAL* &
+                     (JKR_E_EFF_ACTUAL_LOCAL/JKR_E_EFF_LOCAL)** &
+                     (2.D0/5.D0)
+                  JKR_FC_ACTUAL_LOCAL = 3.D0*PI*rad_eff* &
+                     JKR_GAMMA_ACTUAL_LOCAL
+               ENDIF
+
+               IF(JKR_FC_LOCAL > ZERO) THEN
+                  IF(DIST_MAG > (R_LM + JKR_ALPHA_SAFETY* &
+                     JKR_DELTAC_LOCAL)**2) THEN
+                     PFT_NEIGHBOR(:,CC) = ZERO
+                     PFR_NEIGHBOR(:,CC) = ZERO
+                     PFTW_NEIGHBOR(CC) = ZERO
+                     JKR_FRAME_NEIGHBOR(:,CC) = ZERO
+                     JKR_CONTACT_STATE(CC) = .FALSE.
+                     CYCLE
+                  ENDIF
+               ELSEIF(DIST_MAG > (R_LM-SMALL_NUMBER)**2) THEN
+                  PFT_NEIGHBOR(:,CC) = ZERO
+                  PFR_NEIGHBOR(:,CC) = ZERO
+                  PFTW_NEIGHBOR(CC) = ZERO
+                  JKR_FRAME_NEIGHBOR(:,CC) = ZERO
+                  JKR_CONTACT_STATE(CC) = .FALSE.
+                  CYCLE
+               ENDIF
+            ELSEIF(DIST_MAG > (R_LM-SMALL_NUMBER)**2) THEN
                PFT_NEIGHBOR(:,CC) = 0.0
                CYCLE
-            ENDIF
             ENDIF
 
             IF(DIST_MAG == 0) THEN
@@ -419,6 +482,8 @@ CONTAINS
                ELSEIF(.NOT.JKR_CONTACT_STATE(CC)) THEN
                   PFT_NEIGHBOR(:,CC) = ZERO
                   PFR_NEIGHBOR(:,CC) = ZERO
+                  PFTW_NEIGHBOR(CC) = ZERO
+                  JKR_FRAME_NEIGHBOR(:,CC) = ZERO
                   JKR_CONTACT_STATE(CC) = .FALSE.
                   CYCLE
                ENDIF
@@ -463,8 +528,32 @@ CONTAINS
             ELSE
                JKR_CONTACT_STATE(CC) = .FALSE.
                PFR_NEIGHBOR(:,CC) = ZERO
+               PFTW_NEIGHBOR(CC) = ZERO
+               JKR_FRAME_NEIGHBOR(:,CC) = ZERO
             FN(:) =  -(KN_DES * OVERLAP_N * NORMAL(:) + &
                ETAN_DES * V_REL_TRANS_NORM * NORMAL(:))
+            ENDIF
+
+! Rotate existing sliding and rolling histories before either increment.
+! OMEGA_NEW spans the completed motion; the saved time excludes a changed
+! next-step DTSOLID and also survives neighbor rebuilds and restart.
+            IF(USE_JKR .AND. JKR_FC_LOCAL > ZERO) THEN
+               CALL JKR_DIAG_PAIR_EVENT('pair_history_before_transport', &
+                  IGLOBAL_ID(LL),IGLOBAL_ID(I),-1,CC,OVERLAP_N, &
+                  -DOT_PRODUCT(FN,NORMAL),(/0D0,0D0,0D0/), &
+                  PFT_NEIGHBOR(:,CC),PFR_NEIGHBOR(:,CC),JKR_CONTACT_STATE(CC))
+               CALL JKR_TRANSPORT_HISTORY(NORMAL, &
+                  0.5D0*(OMEGA_NEW(LL,:)+OMEGA_NEW(I,:)),S_TIME, &
+                  JKR_FRAME_NEIGHBOR(:,CC),PFT_NEIGHBOR(:,CC), &
+                  PFR_NEIGHBOR(:,CC),HISTORY_VALID)
+               IF(.NOT.HISTORY_VALID) THEN
+!$omp critical (jkr_history_error)
+                  WRITE(ERR_MSG,'(A,2I12)') &
+                     'Invalid JKR contact frame/history for particle IDs ', &
+                     IGLOBAL_ID(LL),IGLOBAL_ID(I)
+                  CALL LOG_ERROR()
+!$omp end critical (jkr_history_error)
+               ENDIF
             ENDIF
 
 ! Calculate the tangential overlap
@@ -478,8 +567,9 @@ CONTAINS
                FTMD = sqrt(dot_product(FT,FT))
 ! Max force before the on set of frictional slip.
                IF(USE_JKR .AND. JKR_FC_LOCAL > ZERO) THEN
-                  FNMD = MEW*ABS(-DOT_PRODUCT(JKR_NORM,NORMAL) + &
-                     2.D0*JKR_FC_LOCAL)
+                  FNMD = MEW*ABS(4.D0*JKR_FC_ACTUAL_LOCAL* &
+                     (A_OVER_A0**3-A_OVER_A0**1.5D0) + &
+                     2.D0*JKR_FC_ACTUAL_LOCAL)
                ELSE
                FNMD = MEW*sqrt(dot_product(FN,FN))
                ENDIF
@@ -498,6 +588,11 @@ CONTAINS
             ELSE
                FT = 0.0
             ENDIF
+
+! Spring and dashpot cancellation can amplify the relative normal
+! roundoff of a nearly zero force; remove that numerical normal component.
+            IF(USE_JKR .AND. JKR_FC_LOCAL > ZERO) &
+               FT = FT-DOT_PRODUCT(FT,NORMAL)*NORMAL
 
             IF(USE_JKR .AND. JKR_FC_LOCAL > ZERO) &
                CALL JKR_DIAG_PAIR_EVENT('pair_force_before', &
@@ -614,6 +709,12 @@ CONTAINS
                      call real_grow(FCHAIN_LENGTH,new_size)
                      call real_grow(FCHAIN_FN_MAG,new_size)
                      call logical_grow(FCHAIN_FCMAX,new_size)
+                     call real_grow(FCHAIN_JKR_STATE,new_size)
+                     call real_grow(FCHAIN_JKR_RADIUS,new_size)
+                     call real_grow(FCHAIN_JKR_GAMMA,new_size)
+                     call real_grow(FCHAIN_TWIST_ANGLE,new_size)
+                     call real_grow2_reverse(FCHAIN_TANGENTIAL_DISPLACEMENT,new_size)
+                     call real_grow2_reverse(FCHAIN_ROLLING_DISPLACEMENT,new_size)
                      call integer_grow(FCHAIN_LOCAL_ID1,new_size)
                      call integer_grow(FCHAIN_LOCAL_ID2,new_size)
                      call integer_grow(FCHAIN_GLOBAL_ID1,new_size)
@@ -632,6 +733,17 @@ CONTAINS
                FCHAIN_FC(FCHAINC,:)        = FC_TMP(:)! Total force (including cohesion)
                FCHAIN_LENGTH(FCHAINC)      = DIST_MAG !distance between LL and I
                FCHAIN_FN_MAG(FCHAINC)      = DSQRT(FN(1)**2 + FN(2)**2 + FN(3)**2) ! Normal force magnitude
+               FCHAIN_JKR_STATE(FCHAINC)   = ZERO
+               FCHAIN_JKR_RADIUS(FCHAINC)  = ZERO
+               FCHAIN_JKR_GAMMA(FCHAINC)   = ZERO
+               FCHAIN_TANGENTIAL_DISPLACEMENT(FCHAINC,:) = PFT_NEIGHBOR(:,CC)
+               FCHAIN_ROLLING_DISPLACEMENT(FCHAINC,:) = ZERO
+               FCHAIN_TWIST_ANGLE(FCHAINC) = ZERO
+               IF(USE_JKR .AND. JKR_FC_LOCAL > ZERO) THEN
+                  FCHAIN_JKR_STATE(FCHAINC) = ONE
+                  FCHAIN_JKR_RADIUS(FCHAINC) = A_JKR
+                  FCHAIN_JKR_GAMMA(FCHAINC) = JKR_GAMMA_LOCAL
+               ENDIF
                FCHAIN_LOCAL_ID1(FCHAINC)   = LL
                FCHAIN_LOCAL_ID2(FCHAINC)   = I
                FCHAIN_GLOBAL_ID1(FCHAINC)  = iglobal_id(LL)
@@ -655,17 +767,34 @@ CONTAINS
                   OMEGA_NEW(LL,:)-OMEGA_NEW(I,:),NORMAL(:)) - &
                   0.5D0*(DES_RADIUS(I)-DES_RADIUS(LL))/ &
                   (DES_RADIUS(LL)+DES_RADIUS(I))*VREL_T(:)
-               PFR_NEIGHBOR(:,CC) = PFR_NEIGHBOR(:,CC) + &
-                  DTSOLID*V_ROLL(:)
-               XI_MAG = SQRT(DOT_PRODUCT(PFR_NEIGHBOR(:,CC), &
-                  PFR_NEIGHBOR(:,CC)))
                XI_CRIT = JKR_THETAR_CRIT*rad_eff
-               IF(XI_MAG > XI_CRIT .AND. XI_MAG > ZERO) &
-                  PFR_NEIGHBOR(:,CC) = XI_CRIT*PFR_NEIGHBOR(:,CC)/XI_MAG
-               KR_JKR = 4.D0*JKR_FC_LOCAL*A_OVER_A0**1.5D0
-! Map tangent-plane displacement to the resisting angular torque axis.
-               MR_TORQUE(:) = KR_JKR* &
-                  CROSS(NORMAL(:),PFR_NEIGHBOR(:,CC))
+               KR_JKR = 4.D0*JKR_FC_ACTUAL_LOCAL*A_OVER_A0**1.5D0
+               ROLL_DAMPING = JKR_ROLL_DAMP_COEFF* &
+                  SQRT(DOT_PRODUCT(JKR_NORM,JKR_NORM))
+               CALL JKR_ROLL_UPDATE(DTSOLID,V_ROLL,KR_JKR,XI_CRIT, &
+                  ROLL_DAMPING,PFR_NEIGHBOR(:,CC),ROLL_RESISTANCE)
+               IF(WRITE_FORCE_CHAIN) &
+                  FCHAIN_ROLLING_DISPLACEMENT(FCHAINC,:) = PFR_NEIGHBOR(:,CC)
+! Keep the zero-damping legacy arithmetic unchanged.
+               IF(ROLL_DAMPING == ZERO) THEN
+                  MR_TORQUE(:) = KR_JKR* &
+                     CROSS(NORMAL(:),PFR_NEIGHBOR(:,CC))
+               ELSE
+                  MR_TORQUE = CROSS(NORMAL,ROLL_RESISTANCE)
+               ENDIF
+! Contact-normal torsion is part of the baseline JKR contact law.
+               TWIST_RATE = DOT_PRODUCT( &
+                  OMEGA_NEW(LL,:)-OMEGA_NEW(I,:),NORMAL)
+               SLIDE_LIMIT = MEW*ABS(4.D0*JKR_FC_ACTUAL_LOCAL* &
+                  (A_OVER_A0**3-A_OVER_A0**1.5D0) + &
+                  2.D0*JKR_FC_ACTUAL_LOCAL)
+               CALL JKR_TWIST_UPDATE(DTSOLID,TWIST_RATE,A_JKR, &
+                  KT_DES,ETAT_DES,SLIDE_LIMIT,PFTW_NEIGHBOR(CC), &
+                  TWIST_MOMENT)
+               IF(WRITE_FORCE_CHAIN) &
+                  FCHAIN_TWIST_ANGLE(FCHAINC) = PFTW_NEIGHBOR(CC)
+               TWIST_TORQUE = TWIST_MOMENT*NORMAL
+               MR_TORQUE = MR_TORQUE + TWIST_TORQUE
 !$omp atomic
                TOW(LL,1) = TOW(LL,1) + MR_TORQUE(1)
 !$omp atomic
@@ -682,6 +811,10 @@ CONTAINS
                   IGLOBAL_ID(LL),IGLOBAL_ID(I),-1,CC,OVERLAP_N, &
                   -DOT_PRODUCT(FN,NORMAL),FT,PFT_NEIGHBOR(:,CC), &
                   PFR_NEIGHBOR(:,CC),JKR_CONTACT_STATE(CC))
+               CALL JKR_ROTATION_HISTORY_EVENT('pair_rotation_after', &
+                  IGLOBAL_ID(LL),IGLOBAL_ID(I),-1,CC,PFTW_NEIGHBOR(CC), &
+                  JKR_FRAME_NEIGHBOR(:,CC),PFT_NEIGHBOR(:,CC), &
+                  PFR_NEIGHBOR(:,CC),FT)
             ELSE
             IF (.not. GluedSphereDEM) THEN
             if(MEW_R>ZERO) then
