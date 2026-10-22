@@ -1,5 +1,7 @@
 # MFIX 26.1.2 球形颗粒 JKR
 
+简体中文 | [English](README.en.md)
+
 本项目以 MFIX 26.1.2 官方源码为基底，实现球形颗粒的 JKR 黏附接触、滑移、
 滚动和扭转，并维护邻居重建、并行迁移及续算中的接触历史。
 当前本地源码基线为 `9b5d639`，对应 GitHub 源码发布
@@ -53,7 +55,7 @@ mpiexec --bind-to none -np 8 /path/to/MfixVer26/code/mfixsolver_dmp
 
 ## 文档入口
 
-以下是本地完整工作区的文档导航。本次 GitHub 更新仅发布源码和本 README；
+以下是本地完整工作区的文档导航。GitHub 已发布当前源码和中英文 README；
 其他文档保留远程已有历史版本，尚未同步的本地文档以路径列出。
 `validation/` 是独立仓库，直接克隆本仓库不会包含其验证记录或算例。
 
